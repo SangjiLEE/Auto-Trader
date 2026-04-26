@@ -24,6 +24,7 @@ from . import db
 from . import fear_greed
 from . import indicators
 from . import market_regime as mr
+from . import metrics as mt
 from . import swing_strategy_v3 as v3
 
 INITIAL_CAPITAL = 5_000_000
@@ -358,23 +359,15 @@ def load_symbol(symbol: str) -> pd.DataFrame | None:
 
 
 def print_summary(symbol: str, state: BacktestStateV4, df: pd.DataFrame, initial: float) -> None:
-    eq = pd.Series(state.equity_curve)
-    if eq.empty:
+    if not state.equity_curve:
         print(f"{symbol}: 결과 없음")
         return
 
-    final = float(eq.iloc[-1])
-    total_return = (final - initial) / initial
-    days = len(eq)
-    years = days / 252 if days > 0 else 1
-    cagr = (1 + total_return) ** (1 / years) - 1 if years > 0 else 0
-    returns = eq.pct_change().fillna(0)
-    sharpe = float((returns.mean() * 252) / (returns.std() * (252 ** 0.5))) if returns.std() > 0 else 0
-    running_max = eq.cummax()
-    mdd = float(((eq - running_max) / running_max).min())
+    # [Phase 1] 새 metrics
+    m = mt.compute_metrics(state.equity_curve, initial_capital=initial)
 
     bh_return = float(df["close"].iloc[-1] / df["close"].iloc[0] - 1)
-    diff = total_return - bh_return
+    diff = m.total_return - bh_return
 
     trades = state.completed_trades
     wins = [t for t in trades if t.pnl > 0]
@@ -384,11 +377,7 @@ def print_summary(symbol: str, state: BacktestStateV4, df: pd.DataFrame, initial
     print(f"v4 (v3 + F&G 극단) 백테스트: {symbol}")
     print("=" * 78)
     print(f"  기간          : {df.index[0].date()} → {df.index[-1].date()} ({len(df)}일)")
-    print(f"  최종 자본     : {final:>12,.0f}")
-    print(f"  누적 수익     : {total_return*100:>+11.2f}%")
-    print(f"  CAGR          : {cagr*100:>+11.2f}%")
-    print(f"  Sharpe        : {sharpe:>12.2f}")
-    print(f"  MDD           : {mdd*100:>+11.2f}%")
+    print(mt.format_summary(m))
     print(f"  Buy & Hold    : {bh_return*100:>+11.2f}%")
     print(f"  vs BH         : {diff*100:>+11.2f}%p [{'WIN' if diff > 0 else 'LOSE'}]")
     print(f"  거래 횟수     : {len(trades)} (승률 {win_rate*100:.1f}%)")

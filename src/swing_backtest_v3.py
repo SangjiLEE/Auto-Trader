@@ -19,6 +19,7 @@ import pandas as pd
 from . import db
 from . import indicators
 from . import market_regime as mr
+from . import metrics as mt
 from . import swing_strategy_v3 as v3
 
 INITIAL_CAPITAL = 5_000_000
@@ -314,13 +315,14 @@ def regime_breakdown(state: BacktestStateV3) -> dict:
 
 
 def print_summary(symbol: str, state: BacktestStateV3, df: pd.DataFrame, initial: float) -> None:
-    metrics = compute_metrics(state.equity_curve, initial)
-    if not metrics:
+    # [Phase 1] 새 metrics 모듈 (Calmar + DD duration + Ulcer 등) 사용
+    m = mt.compute_metrics(state.equity_curve, initial_capital=initial)
+    if m.final_equity == m.initial_capital and m.total_return == 0:
         print(f"{symbol}: 결과 없음")
         return
 
     bh_return = float(df["close"].iloc[-1] / df["close"].iloc[0] - 1)
-    diff = metrics["total_return"] - bh_return
+    diff = m.total_return - bh_return
 
     dist = mr.regime_distribution(df)
     breakdown = regime_breakdown(state)
@@ -329,11 +331,7 @@ def print_summary(symbol: str, state: BacktestStateV3, df: pd.DataFrame, initial
     print(f"Enhanced Swing v3 (체제별 어댑티브) 백테스트: {symbol}")
     print("=" * 80)
     print(f"  기간          : {df.index[0].date()} → {df.index[-1].date()}")
-    print(f"  초기/최종     : {initial:>12,.0f} → {metrics['final']:>12,.0f}")
-    print(f"  누적 수익     : {metrics['total_return']*100:>+11.2f}%")
-    print(f"  CAGR          : {metrics['cagr']*100:>+11.2f}%")
-    print(f"  Sharpe        : {metrics['sharpe']:>12.2f}")
-    print(f"  MDD           : {metrics['mdd']*100:>+11.2f}%")
+    print(mt.format_summary(m))
     print(f"  Buy & Hold    : {bh_return*100:>+11.2f}%")
     print(f"  vs BH         : {diff*100:>+11.2f}%p [{'WIN' if diff > 0 else 'LOSE'}]")
     print(f"  거래 횟수     : {len(state.completed_trades)}")

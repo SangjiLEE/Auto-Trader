@@ -28,6 +28,7 @@ import sys
 import pandas as pd
 
 from . import db
+from . import metrics as mt
 
 DEFAULT_SYMBOLS = ["069500", "SPY", "QQQ"]
 CASH_LABEL = "CASH"
@@ -197,14 +198,11 @@ def main() -> int:
 
     signal = dual_momentum_signal(prices, args.lookback)
     equity, returns, daily_asset = run_dual_momentum(prices, signal, args.cost)
-    m = compute_metrics(equity, returns)
 
-    # 전략 지표
-    print("\n전략 결과:")
-    print(f"  누적 수익률  : {m['total_return'] * 100:+.2f}%")
-    print(f"  CAGR         : {m['cagr'] * 100:+.2f}%")
-    print(f"  샤프         : {m['sharpe']:.2f}")
-    print(f"  최대 낙폭    : {m['mdd'] * 100:+.2f}%")
+    # [Phase 1] 새 metrics: Calmar / DD duration / Ulcer 추가
+    extended = mt.compute_metrics(equity)
+    print("\n전략 결과 (확장 메트릭):")
+    print(mt.format_summary(extended, currency="배"))
 
     # 선택 분포 (월봉 기준)
     print("\n월별 선택 분포:")
