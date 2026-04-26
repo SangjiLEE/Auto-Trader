@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sangjisair.autotrading.monthly_vaa</string>
+
+    <!--
+        VAA (Vigilant Asset Allocation, Keller-Keuning 2017)
+        매월 1~7일 09:05 KST 자동 실행. 첫 영업일에 1번 체결, 이후 "변경 불필요" 판정.
+
+        근로자의 날 (5/1) / 어린이날 (5/5) 등 휴장일 시 그 날 실패 → 다음 날 재시도 효과.
+
+        Day 9 의사결정으로 기존 monthly (DM) 대체.
+        VAA Sharpe 1.54 / Calmar 1.35 / MDD -17.79% (DM 1.10/1.04/-22.85% 대비 우수)
+    -->
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd "$HOME/projects/auto-trading-bot" &amp;&amp; "$HOME/projects/auto-trading-bot/.venv/bin/python" -m src.monthly_vaa --refresh --execute --yes</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>7</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/monthly_vaa.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/monthly_vaa.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>LANG</key>
+        <string>ko_KR.UTF-8</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot</string>
+</dict>
+</plist>
