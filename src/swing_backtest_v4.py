@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from . import cost_model as cm
 from . import db
 from . import fear_greed
 from . import indicators
@@ -28,7 +29,7 @@ from . import metrics as mt
 from . import swing_strategy_v3 as v3
 
 INITIAL_CAPITAL = 5_000_000
-COMMISSION = 0.003
+COMMISSION = 0.003  # legacy fallback only
 # 옵션 B 완화: 매도 임계값 92로 더 극단만, 매도 비율 10%로 약하게, BULL 모드 매도 무시
 SPLIT_BUY_RATIO = 0.25         # 매수 25% (그대로)
 SPLIT_SELL_RATIO = 0.10        # 매도 10% (25% → 완화)
@@ -86,6 +87,16 @@ class BacktestStateV4:
     # [B6 fix] 정확한 P&L 회계용 — 현재 사이클의 cash flow 추적
     position_cost: float = 0.0       # 누적 매수 금액 (commission 포함, 현금 유출)
     position_proceeds: float = 0.0   # 누적 매도 금액 (commission 차감, 현금 유입)
+    # [Phase 1] 거래 비용 모델 (None = legacy COMMISSION)
+    cost_model: cm.CostModel | None = None
+
+
+def _v4_buy_pct(state: BacktestStateV4) -> float:
+    return state.cost_model.buy_total if state.cost_model else COMMISSION / 2
+
+
+def _v4_sell_pct(state: BacktestStateV4) -> float:
+    return state.cost_model.sell_total if state.cost_model else COMMISSION / 2
 
 
 def equity(state: BacktestStateV4, price: float) -> float:
@@ -94,12 +105,13 @@ def equity(state: BacktestStateV4, price: float) -> float:
 
 
 def buy(state: BacktestStateV4, qty: int, price: float, date: pd.Timestamp, regime: str, fg_buy: bool) -> None:
-    cost = qty * price * (1 + COMMISSION / 2)
+    buy_pct = _v4_buy_pct(state)
+    cost = qty * price * (1 + buy_pct)
     if cost > state.cash:
-        qty = int(state.cash / (price * (1 + COMMISSION / 2)))
+        qty = int(state.cash / (price * (1 + buy_pct)))
         if qty <= 0:
             return
-        cost = qty * price * (1 + COMMISSION / 2)
+        cost = qty * price * (1 + buy_pct)
     state.cash -= cost
     state.position_cost += cost  # B6: 정확한 P&L 회계
 
@@ -129,7 +141,8 @@ def buy(state: BacktestStateV4, qty: int, price: float, date: pd.Timestamp, regi
 def sell_partial(state: BacktestStateV4, qty: int, price: float, date: pd.Timestamp, reason: str, fg_sell: bool) -> None:
     if state.position is None or qty <= 0 or qty > state.position.qty:
         return
-    proceeds = qty * price * (1 - COMMISSION / 2)
+    sell_pct = _v4_sell_pct(state)
+    proceeds = qty * price * (1 - sell_pct)
     state.cash += proceeds
     state.position_proceeds += proceeds  # B6: 정확한 P&L 회계
     state.position.qty -= qty
@@ -186,7 +199,8 @@ def sell_full(state: BacktestStateV4, price: float, date: pd.Timestamp, reason: 
     if state.position is None:
         return
     qty = state.position.qty
-    proceeds = qty * price * (1 - COMMISSION / 2)
+    sell_pct = _v4_sell_pct(state)
+    proceeds = qty * price * (1 - sell_pct)
     state.cash += proceeds
     state.position_proceeds += proceeds  # B6: 정확한 P&L 회계
     state.position.qty = 0
@@ -217,15 +231,17 @@ def run_backtest(
     fg_history: dict[str, int],
     initial_capital: float = INITIAL_CAPITAL,
     execution_lag: int = 1,
+    cost_model: cm.CostModel | None = None,
 ) -> BacktestStateV4:
     """
-    [B5 + B6 fix] v4 백테스트.
+    [B5 + B6 + Phase 1 fix] v4 백테스트.
 
     - F&G: D-1 이전 발표값 사용 (look-ahead 제거)
     - 매매: D close 시그널 → (D+execution_lag) open 매매 (라이브 align)
     - P&L: 실측 cash flow 기반 (sell_full_finalize)
+    - 비용: cost_model (KR/US 분리). None 이면 legacy 0.3% RT.
     """
-    state = BacktestStateV4(cash=initial_capital)
+    state = BacktestStateV4(cash=initial_capital, cost_model=cost_model)
     dates = df.index.tolist()
     n = len(dates)
 
@@ -377,6 +393,8 @@ def print_summary(symbol: str, state: BacktestStateV4, df: pd.DataFrame, initial
     print(f"v4 (v3 + F&G 극단) 백테스트: {symbol}")
     print("=" * 78)
     print(f"  기간          : {df.index[0].date()} → {df.index[-1].date()} ({len(df)}일)")
+    if state.cost_model:
+        print(f"  비용 모델     : {state.cost_model.name} (RT {state.cost_model.round_trip*100:.3f}%)")
     print(mt.format_summary(m))
     print(f"  Buy & Hold    : {bh_return*100:>+11.2f}%")
     print(f"  vs BH         : {diff*100:>+11.2f}%p [{'WIN' if diff > 0 else 'LOSE'}]")
@@ -408,7 +426,11 @@ def main() -> int:
         if df is None:
             print(f"  [경고] {sym}: 데이터 없음")
             continue
-        state = run_backtest(df, fg_history, args.capital)
+        # [Phase 1] symbol 별 자동 cost_model
+        cost_model_for_sym = cm.get_cost_model(sym)
+        state = run_backtest(
+            df, fg_history, args.capital, cost_model=cost_model_for_sym,
+        )
         print_summary(sym, state, df, args.capital)
 
     return 0

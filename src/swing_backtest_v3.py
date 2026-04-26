@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from . import cost_model as cm
 from . import db
 from . import indicators
 from . import market_regime as mr
@@ -23,7 +24,7 @@ from . import metrics as mt
 from . import swing_strategy_v3 as v3
 
 INITIAL_CAPITAL = 5_000_000
-COMMISSION = 0.003
+COMMISSION = 0.003  # legacy, cost_model=None 일 때만 사용
 
 DEFAULT_UNIVERSE = ["NVDA", "TSLA", "AAPL", "069500"]
 
@@ -56,6 +57,18 @@ class BacktestStateV3:
     last_exit_regime: str = mr.REGIME_RANGE
     partial_sells: list[dict] = field(default_factory=list)
     blocked_by_bear: int = 0  # BEAR 차단으로 진입 안 한 카운트
+    # [Phase 1] 거래 비용 모델 — None 이면 legacy COMMISSION 사용
+    cost_model: cm.CostModel | None = None
+
+
+def _buy_cost_pct(state: BacktestStateV3) -> float:
+    """매수 1회당 추가 비용 비율 (가격에 곱하면 비용)."""
+    return state.cost_model.buy_total if state.cost_model else COMMISSION / 2
+
+
+def _sell_cost_pct(state: BacktestStateV3) -> float:
+    """매도 1회당 차감 비용 비율."""
+    return state.cost_model.sell_total if state.cost_model else COMMISSION / 2
 
 
 def equity(state: BacktestStateV3, price: float) -> float:
@@ -67,12 +80,13 @@ def execute_buy(
     state: BacktestStateV3, qty: int, price: float, date: pd.Timestamp,
     regime: str | None = None,
 ) -> bool:
-    cost = qty * price * (1 + COMMISSION / 2)
+    buy_pct = _buy_cost_pct(state)
+    cost = qty * price * (1 + buy_pct)
     if cost > state.cash:
-        qty = int(state.cash / (price * (1 + COMMISSION / 2)))
+        qty = int(state.cash / (price * (1 + buy_pct)))
         if qty <= 0:
             return False
-        cost = qty * price * (1 + COMMISSION / 2)
+        cost = qty * price * (1 + buy_pct)
 
     state.cash -= cost
 
@@ -98,7 +112,8 @@ def execute_partial_sell(
 ) -> None:
     if state.position is None or qty <= 0 or qty > state.position.qty:
         return
-    state.cash += qty * price * (1 - COMMISSION / 2)
+    sell_pct = _sell_cost_pct(state)
+    state.cash += qty * price * (1 - sell_pct)
     pnl = (price - state.position.avg_price) * qty
     state.partial_sells.append({
         "date": date, "qty": qty, "price": price, "pnl": pnl, "reason": reason,
@@ -112,7 +127,8 @@ def execute_full_sell(
     if state.position is None:
         return
     pos = state.position
-    state.cash += pos.qty * price * (1 - COMMISSION / 2)
+    sell_pct = _sell_cost_pct(state)
+    state.cash += pos.qty * price * (1 - sell_pct)
 
     final_pnl = (price - pos.avg_price) * pos.qty
     partial_pnl = sum(s["pnl"] for s in state.partial_sells)
@@ -172,18 +188,23 @@ def run_backtest(
     df: pd.DataFrame,
     initial_capital: float = INITIAL_CAPITAL,
     execution_lag: int = 1,
+    cost_model: cm.CostModel | None = None,
 ) -> BacktestStateV3:
     """
-    [B5 fix] 백테스트-라이브 timing alignment.
+    [B5 + Phase 1 fix] 백테스트.
 
-    execution_lag=1 (기본): D 일 close 로 시그널 평가 → (D+1) open 으로 매매
-       라이브 (어제 close 데이터로 오늘 09:20 시초 매매) 와 1:1 align
+    execution_lag=1 (기본): D 일 close 시그널 → (D+1) open 매매 (라이브 align)
     execution_lag=0 (legacy): D close 시그널 + D close 매매
-       (look-ahead 의심, BACKTESTS.md 결과 재현용으로만)
+
+    cost_model: KR/US 분리된 실측 비용 모델. None 이면 기존 0.3% 단일 상수.
+       전형적인 RT:
+         - KR_ETF_LARGE: 0.39% (069500 등, 거래세 면제)
+         - KR_STOCK_LARGE: 0.61% (005930 등, 거래세 0.18%)
+         - US_STOCK_LARGE: 0.73% (AAPL 등, 환마진 0.4% 포함)
 
     Equity curve 는 항상 close 기준 (mark-to-market) 유지.
     """
-    state = BacktestStateV3(cash=initial_capital)
+    state = BacktestStateV3(cash=initial_capital, cost_model=cost_model)
     dates = df.index.tolist()
     n = len(dates)
 
@@ -331,6 +352,8 @@ def print_summary(symbol: str, state: BacktestStateV3, df: pd.DataFrame, initial
     print(f"Enhanced Swing v3 (체제별 어댑티브) 백테스트: {symbol}")
     print("=" * 80)
     print(f"  기간          : {df.index[0].date()} → {df.index[-1].date()}")
+    if state.cost_model:
+        print(f"  비용 모델     : {state.cost_model.name} (RT {state.cost_model.round_trip*100:.3f}%)")
     print(mt.format_summary(m))
     print(f"  Buy & Hold    : {bh_return*100:>+11.2f}%")
     print(f"  vs BH         : {diff*100:>+11.2f}%p [{'WIN' if diff > 0 else 'LOSE'}]")
@@ -376,7 +399,11 @@ def main() -> int:
             print(f"  [경고] {sym}: 데이터 없음")
             continue
         print(f"  {sym}: {len(df)}일")
-        state = run_backtest(df, initial_capital=args.capital)
+        # [Phase 1] symbol 기반 자동 cost model
+        cost_model_for_sym = cm.get_cost_model(sym)
+        state = run_backtest(
+            df, initial_capital=args.capital, cost_model=cost_model_for_sym,
+        )
         print_summary(sym, state, df, args.capital)
 
     return 0

@@ -27,6 +27,7 @@ import sys
 
 import pandas as pd
 
+from . import cost_model as cm
 from . import db
 from . import metrics as mt
 
@@ -110,8 +111,13 @@ def run_dual_momentum(
     prices: pd.DataFrame,
     monthly_signal: pd.Series,
     cost: float = 0.003,
+    cost_model_fn=None,  # callable(symbol) -> CostModel; None 이면 cost float 사용
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """월봉 시그널 → 일봉 포지션 → 전략 수익.
+
+    cost: 단일 비용 상수 (legacy)
+    cost_model_fn: 자산 전환 시 사용할 비용 모델 함수 (Phase 1).
+       전환 시점마다 (이전 자산 sell_total + 새 자산 buy_total) 적용.
 
     반환: (equity, returns, daily_asset_signal)
     """
@@ -130,9 +136,28 @@ def run_dual_momentum(
         if asset != CASH_LABEL and asset in asset_returns.columns:
             strategy_returns.loc[dt] = asset_returns.at[dt, asset]
 
-    # 자산 변경 시 거래 비용 (양쪽 청산·진입)
+    # 자산 변경 시 비용
     changes = (daily_asset_lagged != daily_asset_lagged.shift(1)).fillna(False)
-    strategy_returns = strategy_returns - changes.astype(float) * cost
+
+    if cost_model_fn is None:
+        # legacy 단일 비용
+        strategy_returns = strategy_returns - changes.astype(float) * cost
+    else:
+        # [Phase 1] 자산별 정확한 비용 (전환 시 from sell + to buy)
+        cost_per_change = pd.Series(0.0, index=prices.index)
+        prev_assets = daily_asset_lagged.shift(1)
+        for dt in prices.index:
+            if not changes.at[dt]:
+                continue
+            prev = prev_assets.at[dt]
+            curr = daily_asset_lagged.at[dt]
+            c = 0.0
+            if prev != CASH_LABEL and prev in prices.columns:
+                c += cost_model_fn(str(prev)).sell_total
+            if curr != CASH_LABEL and curr in prices.columns:
+                c += cost_model_fn(str(curr)).buy_total
+            cost_per_change.at[dt] = c
+        strategy_returns = strategy_returns - cost_per_change
 
     equity = (1 + strategy_returns).cumprod()
     return equity, strategy_returns, daily_asset_lagged
@@ -197,11 +222,14 @@ def main() -> int:
     print("=" * 64)
 
     signal = dual_momentum_signal(prices, args.lookback)
-    equity, returns, daily_asset = run_dual_momentum(prices, signal, args.cost)
+    # [Phase 1] cost_model_fn 사용 시 자산별 정확한 비용
+    equity, returns, daily_asset = run_dual_momentum(
+        prices, signal, args.cost, cost_model_fn=cm.get_cost_model,
+    )
 
     # [Phase 1] 새 metrics: Calmar / DD duration / Ulcer 추가
     extended = mt.compute_metrics(equity)
-    print("\n전략 결과 (확장 메트릭):")
+    print("\n전략 결과 (확장 메트릭, KR ETF cost 0.39% RT 적용):")
     print(mt.format_summary(extended, currency="배"))
 
     # 선택 분포 (월봉 기준)
