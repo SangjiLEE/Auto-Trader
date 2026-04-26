@@ -58,13 +58,33 @@ def load_multi_prices(symbols: list[str]) -> pd.DataFrame:
 
 
 def dual_momentum_signal(
-    prices: pd.DataFrame, lookback_months: int
+    prices: pd.DataFrame,
+    lookback_months: int,
+    complete_only: bool = True,
 ) -> pd.Series:
     """매월 말 선택 자산 (또는 CASH) 반환.
 
     반환: index = 월말 날짜, value = 자산 이름 또는 'CASH'
+
+    [B1 fix] complete_only=True (기본):
+      `resample("ME").last()` 는 부분 진행 중인 현재 월에 대해서도
+      bucket(label = calendar month-end) 을 만들기 때문에, 매월 1~3일에
+      라이브 실행하면 "지난달 신호" 가 아니라 "현재 부분월 신호" 를 사용
+      하게 됨. 마지막 실제 거래일이 마지막 bucket label 보다 이전이면
+      해당 bucket 은 미완료 → 제외.
+
+      백테스트 시퀀스 분석 등에서 모든 bucket 이 필요하다면
+      complete_only=False 로 호출.
     """
     monthly = prices.resample("ME").last()
+
+    # B1: 미완료 현재월 bucket 제거 (라이브 신호 정확성 보장)
+    if complete_only and not monthly.empty and not prices.empty:
+        last_data_date = prices.index[-1]
+        last_bucket_label = monthly.index[-1]
+        if last_data_date < last_bucket_label:
+            monthly = monthly.iloc[:-1]
+
     # N개월 수익률
     monthly_return = monthly.pct_change(lookback_months)
 

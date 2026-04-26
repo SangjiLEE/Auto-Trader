@@ -53,17 +53,40 @@ def refresh_data() -> None:
 # ── 시그널 ────────────────────────────────────────────
 
 def compute_current_signal(lookback: int = 12) -> tuple[str, str]:
-    """최신 DM 시그널. 반환: (target_asset, signal_date_str)."""
+    """최신 DM 시그널. 반환: (target_asset, signal_date_str).
+
+    [B1 fix] dual_momentum_signal(complete_only=True) 사용으로 부분
+    현재월 bucket 자동 제외. 추가 검증:
+      - 신호 날짜가 직전 완료 월말인지 확인
+      - 60일 이상 stale 이면 경고 (데이터 갱신 누락 의심)
+    """
     prices = dm.load_multi_prices(UNIVERSE_SYMBOLS)
     if prices.empty:
         raise RuntimeError("DB 데이터 없음. --refresh 옵션 또는 load_candles 실행 필요")
 
-    signal = dm.dual_momentum_signal(prices, lookback)
+    signal = dm.dual_momentum_signal(prices, lookback, complete_only=True)
     if signal.empty:
-        raise RuntimeError("시그널 없음 - 데이터 부족")
+        raise RuntimeError(
+            "시그널 없음 — 완료된 월 데이터 부족 (lookback 12개월 + 현재월 제외 후)"
+        )
 
     last_date = signal.index[-1]
     target = str(signal.iloc[-1])
+
+    # 신호 staleness 검증
+    today = pd.Timestamp.today().normalize()
+    days_old = (today - last_date).days
+    if days_old > 60:
+        print(
+            f"⚠️  [B1] 신호가 오래됨 ({days_old}일 전, {last_date.date()}). "
+            "데이터 갱신 필요 가능성. --refresh 검토."
+        )
+    elif days_old < 1:
+        # complete_only=True 면 발생 안 해야 함. 안전장치.
+        raise RuntimeError(
+            f"신호 날짜가 오늘 이후 ({last_date.date()}) — 미완료 bucket 의심"
+        )
+
     return target, last_date.strftime("%Y-%m-%d")
 
 
