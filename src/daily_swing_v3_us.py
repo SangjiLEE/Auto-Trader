@@ -147,12 +147,104 @@ def reconstruct_position(symbol: str, df: pd.DataFrame) -> v3.PositionV3 | None:
     else:
         peak = avg_price
 
-    return v3.PositionV3(
+    pos = v3.PositionV3(
         qty=total_qty, avg_price=avg_price, entry_date=entry_date,
         initial_qty=initial_qty, peak_price=peak, entry_regime=entry_regime,
         pf_t1_done=pf_t1_done, pf_t2_done=pf_t2_done,
         trailing_active=trailing_active, dca_done=dca_done,
     )
+
+    # B4 fix: position_states 에서 in-memory 상태 overlay
+    state = _load_position_state(symbol)
+    if state is not None:
+        pos.trailing_active = state["trailing_active"] or pos.trailing_active
+        pos.pf_t1_done = state["pf_t1_done"] or pos.pf_t1_done
+        pos.pf_t2_done = state["pf_t2_done"] or pos.pf_t2_done
+        pos.dca_done = state["dca_done"] or pos.dca_done
+        pos.peak_price = max(pos.peak_price, state["peak_price"])
+        if state["entry_regime"]:
+            pos.entry_regime = state["entry_regime"]
+
+    return pos
+
+
+def save_position_state(symbol: str, position: v3.PositionV3) -> None:
+    """[B4 fix] v3 in-memory 상태 영속화 (US)."""
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO position_states
+                (symbol, strategy, env, trailing_active, pf_t1_done,
+                 pf_t2_done, dca_done, peak_price, entry_regime, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (
+                symbol, STRATEGY_TAG, config.KIS_ENV,
+                int(position.trailing_active),
+                int(position.pf_t1_done),
+                int(position.pf_t2_done),
+                int(position.dca_done),
+                float(position.peak_price),
+                position.entry_regime,
+            ),
+        )
+
+
+def clear_position_state(symbol: str) -> None:
+    """[B4 fix] 청산된 포지션의 영속 상태 삭제."""
+    with db.connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM position_states
+            WHERE symbol = ? AND strategy = ? AND env = ?
+            """,
+            (symbol, STRATEGY_TAG, config.KIS_ENV),
+        )
+
+
+def _load_position_state(symbol: str) -> dict | None:
+    """[B4 fix] position_states 에서 in-memory 상태 로드."""
+    with db.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT trailing_active, pf_t1_done, pf_t2_done, dca_done,
+                   peak_price, entry_regime
+            FROM position_states
+            WHERE symbol = ? AND strategy = ? AND env = ?
+            """,
+            (symbol, STRATEGY_TAG, config.KIS_ENV),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "trailing_active": bool(row["trailing_active"]),
+        "pf_t1_done": bool(row["pf_t1_done"]),
+        "pf_t2_done": bool(row["pf_t2_done"]),
+        "dca_done": bool(row["dca_done"]),
+        "peak_price": float(row["peak_price"] or 0),
+        "entry_regime": row["entry_regime"] or mr.REGIME_RANGE,
+    }
+
+
+def _persist_position_states(
+    positions: dict[str, v3.PositionV3],
+    results: list[dict] | None = None,
+) -> None:
+    """[B4 fix] 매 실행 끝에 살아있는 포지션 state 영속화."""
+    cleared: set[str] = set()
+    if results is not None:
+        for r in results:
+            if r.get("status") != "OK":
+                continue
+            sym = r.get("symbol")
+            qty = r.get("qty", 0)
+            if r.get("action") == "SELL" and sym in positions:
+                if qty >= positions[sym].qty:
+                    clear_position_state(sym)
+                    cleared.add(sym)
+    for sym, pos in positions.items():
+        if sym not in cleared:
+            save_position_state(sym, pos)
 
 
 def get_v3_positions(symbol_data: dict[str, pd.DataFrame]) -> dict[str, v3.PositionV3]:
@@ -432,6 +524,7 @@ def main() -> int:
 
     if not actions:
         print("\n변경 없음.")
+        _persist_position_states(positions)  # B4: 변경 없어도 mutated state 보존
         _send_report(swing_budget_usd, positions, scan_results, actions)
         return 0
 
@@ -441,11 +534,13 @@ def main() -> int:
 
     if not args.execute:
         print("\n※ DRY RUN")
+        _persist_position_states(positions)  # B4: 드라이런도 state 보존
         _send_report(swing_budget_usd, positions, scan_results, actions)
         return 0
 
     if not args.yes and not confirm_execution():
         print("취소됨.")
+        _persist_position_states(positions)  # B4: 취소도 state 보존
         return 0
 
     print("\n주문 전송 중...")
@@ -479,6 +574,8 @@ def main() -> int:
 
     ok = sum(1 for r in results if r["status"] == "OK")
     print(f"\n완료: 성공 {ok} / 실패 {len(results)-ok}")
+    # B4: 실 주문 결과 반영 — 청산된 sym clear, 나머지 save
+    _persist_position_states(positions, results)
     _send_report(swing_budget_usd, positions, scan_results, actions, results)
     return 0
 

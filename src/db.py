@@ -58,6 +58,27 @@ CREATE TABLE IF NOT EXISTS trades (
 
 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
 CREATE INDEX IF NOT EXISTS idx_trades_executed ON trades(executed_at);
+
+-- [B4 fix] 라이브 포지션의 in-memory 상태 영속화
+-- trades 만으론 재구성 불가능한 상태:
+--   - trailing_active: 트레일링 활성화는 sell 거래 발생 X 시점에 일어남
+--                       (peak +N% 도달 시 활성화만, 매도는 -drawdown 도달 시)
+--   - peak_price: 일별 갱신, 마지막 trade 후 변동 가능
+-- 매 daily 실행 후 살아있는 포지션의 v3 상태 upsert.
+-- 청산 시 row 삭제.
+CREATE TABLE IF NOT EXISTS position_states (
+    symbol           TEXT     NOT NULL,
+    strategy         TEXT     NOT NULL,
+    env              TEXT     NOT NULL,
+    trailing_active  INTEGER  DEFAULT 0,
+    pf_t1_done       INTEGER  DEFAULT 0,
+    pf_t2_done       INTEGER  DEFAULT 0,
+    dca_done         INTEGER  DEFAULT 0,
+    peak_price       REAL     DEFAULT 0,
+    entry_regime     TEXT     DEFAULT 'RANGE',
+    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (symbol, strategy, env)
+);
 """
 
 

@@ -67,8 +67,74 @@ def load_indicators_latest() -> dict[str, pd.DataFrame]:
     return result
 
 
+def save_position_state(symbol: str, position: v3.PositionV3) -> None:
+    """[B4 fix] v3 in-memory 상태 영속화.
+
+    trades 만으론 재구성 불가능한 상태 (trailing_active, peak_price)
+    를 position_states 에 upsert. 매 실행 끝에 살아있는 포지션 모두 갱신.
+    """
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO position_states
+                (symbol, strategy, env, trailing_active, pf_t1_done,
+                 pf_t2_done, dca_done, peak_price, entry_regime, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (
+                symbol, STRATEGY_TAG, config.KIS_ENV,
+                int(position.trailing_active),
+                int(position.pf_t1_done),
+                int(position.pf_t2_done),
+                int(position.dca_done),
+                float(position.peak_price),
+                position.entry_regime,
+            ),
+        )
+
+
+def clear_position_state(symbol: str) -> None:
+    """[B4 fix] 청산된 포지션의 영속 상태 삭제."""
+    with db.connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM position_states
+            WHERE symbol = ? AND strategy = ? AND env = ?
+            """,
+            (symbol, STRATEGY_TAG, config.KIS_ENV),
+        )
+
+
+def _load_position_state(symbol: str) -> dict | None:
+    """[B4 fix] position_states 에서 in-memory 상태 로드."""
+    with db.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT trailing_active, pf_t1_done, pf_t2_done, dca_done,
+                   peak_price, entry_regime
+            FROM position_states
+            WHERE symbol = ? AND strategy = ? AND env = ?
+            """,
+            (symbol, STRATEGY_TAG, config.KIS_ENV),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "trailing_active": bool(row["trailing_active"]),
+        "pf_t1_done": bool(row["pf_t1_done"]),
+        "pf_t2_done": bool(row["pf_t2_done"]),
+        "dca_done": bool(row["dca_done"]),
+        "peak_price": float(row["peak_price"] or 0),
+        "entry_regime": row["entry_regime"] or mr.REGIME_RANGE,
+    }
+
+
 def reconstruct_position(symbol: str, df: pd.DataFrame) -> v3.PositionV3 | None:
-    """trades 테이블에서 v3 포지션 상태 복원."""
+    """trades 테이블에서 v3 포지션 상태 복원.
+
+    [B4 fix] trades 기반 재구성 후 position_states 에서 overlay.
+    trailing_active 처럼 trades 에 흔적 없는 상태를 정확히 복원.
+    """
     with db.connection() as conn:
         rows = conn.execute(
             """
@@ -154,12 +220,28 @@ def reconstruct_position(symbol: str, df: pd.DataFrame) -> v3.PositionV3 | None:
     else:
         peak = avg_price
 
-    return v3.PositionV3(
+    pos = v3.PositionV3(
         qty=total_qty, avg_price=avg_price, entry_date=entry_date,
         initial_qty=initial_qty, peak_price=peak, entry_regime=entry_regime,
         pf_t1_done=pf_t1_done, pf_t2_done=pf_t2_done,
         trailing_active=trailing_active, dca_done=dca_done,
     )
+
+    # B4 fix: position_states 에서 in-memory 상태 overlay
+    # (trailing_active 처럼 trades 에 직접 흔적 없는 상태 복원)
+    state = _load_position_state(symbol)
+    if state is not None:
+        pos.trailing_active = state["trailing_active"] or pos.trailing_active
+        pos.pf_t1_done = state["pf_t1_done"] or pos.pf_t1_done
+        pos.pf_t2_done = state["pf_t2_done"] or pos.pf_t2_done
+        pos.dca_done = state["dca_done"] or pos.dca_done
+        # peak_price 는 max (DB 값과 가격 히스토리 max 중 큰 쪽)
+        pos.peak_price = max(pos.peak_price, state["peak_price"])
+        if state["entry_regime"]:
+            # 진입 시점 체제는 영속 상태가 더 정확 (notes 파싱 fallback 보다)
+            pos.entry_regime = state["entry_regime"]
+
+    return pos
 
 
 def get_v3_positions(symbol_data: dict[str, pd.DataFrame]) -> dict[str, v3.PositionV3]:
@@ -171,6 +253,33 @@ def get_v3_positions(symbol_data: dict[str, pd.DataFrame]) -> dict[str, v3.Posit
         if pos is not None:
             positions[sym] = pos
     return positions
+
+
+def _persist_position_states(
+    positions: dict[str, v3.PositionV3],
+    results: list[dict] | None = None,
+) -> None:
+    """[B4 fix] 매 실행 끝에 살아있는 포지션의 v3 in-memory state 영속화.
+
+    드라이런 (results=None): 모든 살아있는 pos save
+       (v3.check_exit_v3() 가 mutate 한 peak / trailing_active 등 보존)
+    실 주문 (results=list): 실제 전량 청산된 sym 은 clear,
+       나머지 살아있는 pos 는 save
+    """
+    cleared: set[str] = set()
+    if results is not None:
+        for r in results:
+            if r.get("status") != "OK":
+                continue
+            sym = r.get("symbol")
+            qty = r.get("qty", 0)
+            if r.get("action") == "SELL" and sym in positions:
+                if qty >= positions[sym].qty:
+                    clear_position_state(sym)
+                    cleared.add(sym)
+    for sym, pos in positions.items():
+        if sym not in cleared:
+            save_position_state(sym, pos)
 
 
 def log_trade(symbol, side, qty, price, order_id, msg, regime_note=""):
@@ -305,6 +414,9 @@ def main() -> int:
     current_date = pd.Timestamp(date.today())
 
     # 1. 청산 / 부분익절 / 트레일링 체크
+    # [B4] 청산 액션 + state 변화는 v3.check_exit_v3() 호출로 발생.
+    # 그 호출이 pos 의 trailing_active / peak_price / pf_t*_done 을 mutate 함.
+    # 이 mutated state 를 매 실행 끝에 position_states 로 영속화.
     print("\n[청산/익절 체크]")
     for sym, pos in list(positions.items()):
         df = symbol_data[sym]
@@ -446,6 +558,7 @@ def main() -> int:
 
     if not actions:
         print("\n변경 없음.")
+        _persist_position_states(positions)  # B4: 변경 없어도 mutated state 보존
         _send_report(swing_budget, positions, scan_results, actions)
         return 0
 
@@ -455,6 +568,7 @@ def main() -> int:
 
     if not args.execute:
         print("\n※ DRY RUN")
+        _persist_position_states(positions)  # B4: 드라이런도 mutated state 보존
         _send_report(swing_budget, positions, scan_results, actions)
         return 0
 
@@ -490,6 +604,8 @@ def main() -> int:
 
     ok = sum(1 for r in results if r["status"] == "OK")
     print(f"\n완료: 성공 {ok} / 실패 {len(results)-ok}")
+    # B4: 실 주문 결과 반영하여 state 갱신 (청산된 sym clear, 나머지 save)
+    _persist_position_states(positions, results)
     _send_report(swing_budget, positions, scan_results, actions, results)
     return 0
 
