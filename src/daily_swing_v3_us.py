@@ -31,9 +31,13 @@ from . import notify
 from . import place_overseas_order
 from . import swing_strategy_v3 as v3
 
-SWING_UNIVERSE = ["AAPL", "NVDA", "TSLA"]  # SPY/QQQ 제거 (장기 BH 못 잡음)
-SWING_ALLOCATION = 0.15
-MAX_POSITIONS = 3
+# [Day 9 옵션 C] NVDA 단독 운영
+# - Day 9 백테스트: NVDA v4 가 v3 대비 +19.03%p (유일한 효과 종목)
+# - AAPL / TSLA 는 v3 / v4 모두 BH 한참 못 이김 → 폐기
+# - VAA (KR 메인) + NVDA v4 (US 알파) 분리 시스템
+SWING_UNIVERSE = ["NVDA"]
+SWING_ALLOCATION = 0.15      # US 슬리브 = USD 자본의 15%
+MAX_POSITIONS = 1            # NVDA 단독
 STRATEGY_TAG = "swing_v3"
 USD_KRW_ESTIMATE = 1400
 ORDER_PRICE_BUFFER = 0.005
