@@ -167,53 +167,84 @@ def can_reenter(
     return False
 
 
-def run_backtest(df: pd.DataFrame, initial_capital: float = INITIAL_CAPITAL) -> BacktestStateV3:
+def run_backtest(
+    df: pd.DataFrame,
+    initial_capital: float = INITIAL_CAPITAL,
+    execution_lag: int = 1,
+) -> BacktestStateV3:
+    """
+    [B5 fix] 백테스트-라이브 timing alignment.
+
+    execution_lag=1 (기본): D 일 close 로 시그널 평가 → (D+1) open 으로 매매
+       라이브 (어제 close 데이터로 오늘 09:20 시초 매매) 와 1:1 align
+    execution_lag=0 (legacy): D close 시그널 + D close 매매
+       (look-ahead 의심, BACKTESTS.md 결과 재현용으로만)
+
+    Equity curve 는 항상 close 기준 (mark-to-market) 유지.
+    """
     state = BacktestStateV3(cash=initial_capital)
     dates = df.index.tolist()
+    n = len(dates)
 
     for i, date in enumerate(dates):
         row = df.iloc[i]
-        price = float(row["close"]) if pd.notna(row["close"]) else None
-        if price is None:
+        close = float(row["close"]) if pd.notna(row["close"]) else None
+        if close is None:
             state.equity_curve[date] = equity(state, state.position.avg_price if state.position else 0)
             continue
 
-        # 청산 + DCA
+        # equity curve = D close 기준 mark-to-market
+        state.equity_curve[date] = equity(state, close)
+
+        # 매매 가격 / 시점 결정
+        trade_idx = i + execution_lag
+        if execution_lag > 0:
+            if trade_idx >= n:
+                continue  # 다음 거래일 데이터 없음 → 매매 불가
+            trade_row = df.iloc[trade_idx]
+            t_open = trade_row.get("open")
+            t_close = trade_row.get("close")
+            if pd.isna(t_open) and pd.isna(t_close):
+                continue
+            trade_price = float(t_open) if pd.notna(t_open) else float(t_close)
+            trade_date = dates[trade_idx]
+        else:
+            trade_price = close
+            trade_date = date
+
+        # === D close 로 모든 시그널 평가 ===
+        # 청산 + 부분익절 + 트레일링 + DCA
         if state.position is not None:
             actions = v3.check_exit_v3(row, state.position, date)
             if actions:
                 for action in actions:
                     if action.type == "SELL_PARTIAL":
-                        execute_partial_sell(state, action.qty, price, date, action.reason)
+                        execute_partial_sell(state, action.qty, trade_price, trade_date, action.reason)
                     elif action.type == "SELL_ALL":
-                        execute_full_sell(state, price, date, action.reason)
+                        execute_full_sell(state, trade_price, trade_date, action.reason)
                         break
 
             if state.position is not None:
                 dca = v3.check_dca(row, state.position)
                 if dca is not None:
-                    execute_buy(state, dca.qty, price, date)
+                    execute_buy(state, dca.qty, trade_price, trade_date)
         else:
-            # 진입 검토
-            if i >= 1:
-                # 오늘 시점 체제 확인
-                regime_today = mr.detect_regime(row)
-                params = v3.get_params(regime_today)
+            # 진입 검토 — D close 의 indicators 사용 (look-ahead 없음, D 종가는 D 종료 시점에 알 수 있음)
+            regime_today = mr.detect_regime(row)
+            params = v3.get_params(regime_today)
 
-                if params.get("block_entry"):
-                    state.blocked_by_bear += 1
-                else:
-                    prev_row = df.iloc[i - 1]
-                    signal = v3.check_entry(prev_row, regime_today)
-                    if signal.valid and can_reenter(state, date, price, regime_today):
-                        ratio = params["initial_buy_ratio"]
-                        target_alloc = state.cash * ratio
-                        qty = int(target_alloc / price)
-                        if qty > 0:
-                            execute_buy(state, qty, price, date, regime=regime_today)
+            if params.get("block_entry"):
+                state.blocked_by_bear += 1
+            else:
+                signal = v3.check_entry(row, regime_today)
+                if signal.valid and can_reenter(state, trade_date, trade_price, regime_today):
+                    ratio = params["initial_buy_ratio"]
+                    target_alloc = state.cash * ratio
+                    qty = int(target_alloc / trade_price)
+                    if qty > 0:
+                        execute_buy(state, qty, trade_price, trade_date, regime=regime_today)
 
-        state.equity_curve[date] = equity(state, price)
-
+    # 백테스트 끝 잔여 포지션 강제 청산 (마지막 close)
     if state.position is not None and dates:
         last_date = dates[-1]
         last_price = float(df.iloc[-1]["close"])
