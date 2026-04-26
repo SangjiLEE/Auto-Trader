@@ -1,5 +1,7 @@
 # Auto Trader
 
+🌐 **언어**: **한국어** · [English](README.en.md) · [日本語](README.ja.md)
+
 > **혼자서 8일 만에 만든 멀티 전략 자동매매 시스템.**
 > Python + Claude Code (AI 페어 프로그래밍) + KIS Open API.
 
@@ -149,16 +151,25 @@
 
 ## 자세한 문서
 
-| 파일 | 내용 |
-|-----|-----|
-| [docs/STRATEGIES.md](docs/STRATEGIES.md) | DM, v3, v4 전략 룰 + 검증 결과 |
-| [docs/HARNESS.md](docs/HARNESS.md) | 12개 하네스 엔지니어링 패턴 상세 |
-| [docs/SETUP.md](docs/SETUP.md) | 설치 가이드 (KIS API, Telegram, launchd) |
-| [docs/SCHEDULES.md](docs/SCHEDULES.md) | 자동 스케줄 + Telegram 알림 형태 |
-| [docs/BACKTESTS.md](docs/BACKTESTS.md) | 백테스트 결과 종합 |
-| [docs/JOURNEY.md](docs/JOURNEY.md) | 8일 진화 과정 일지 |
-| [DESIGN_DOC.md](DESIGN_DOC.md) | 프로젝트 시작 시 작성한 설계 문서 |
-| [CLAUDE.md](CLAUDE.md) | Claude Code 용 프로젝트 컨텍스트 (AI 워크플로우) |
+각 문서가 **왜 따로 존재하는지** 의도부터 정리:
+
+| 파일 | 한 줄 요약 | 누구를 위해 | 어떻게 다른가 |
+|-----|----------|----------|-----------|
+| **README** (.md / .en.md / .ja.md) | 프로젝트 쇼케이스 | repo 방문자 (3-5분 훑는 사람) | "무엇 / 왜 / 어떻게" 의 한눈 요약. 깊이 X |
+| [docs/STRATEGIES.md](docs/STRATEGIES.md) | **거래 룰 레퍼런스 매뉴얼** | 룰을 이해 / 확장하려는 사람 | "**무엇을** 사고팔까" — 진입/청산 조건, 체제별 룰, F&G 통합 수식 |
+| [docs/HARNESS.md](docs/HARNESS.md) | **엔지니어링 딥다이브** | 코드를 배우려는 개발자 | "**어떻게** 만들었는가" — 12개 재사용 패턴 (백테스트 하네스, 플러그인, 토글, 상태 재구성) |
+| [docs/SETUP.md](docs/SETUP.md) | **설치 매뉴얼** | 직접 돌려보려는 사람 | "Python 설치 → launchd 5개 등록" 까지 단계별 |
+| [docs/SCHEDULES.md](docs/SCHEDULES.md) | **운영 런북** | 매일 운영하는 사람 | 각 작업의 실행 시각, Telegram 샘플 메시지, 휴장일 처리 |
+| [docs/BACKTESTS.md](docs/BACKTESTS.md) | **증거 자료실** | 주장 신뢰성을 확인하려는 사람 | 의사결정에 쓰인 모든 백테스트 (폐기된 전략 포함). 숫자로 증명 |
+| [docs/JOURNEY.md](docs/JOURNEY.md) | **8일 일지** | 과정에 관심 있는 사람 | 시간순 스토리. 시도 / 실패 / 학습 / 다음 결정 |
+| [DESIGN_DOC.md](DESIGN_DOC.md) | **Day 1 원본 설계서** | 초기 의도를 보고 싶은 사람 | 프로젝트 시작일에 쓴 8가지 트레이딩 스타일 비교. 보존용 (의도적으로 수정 X) |
+| [CLAUDE.md](CLAUDE.md) | **AI 워크플로우 컨텍스트** | 다음 Claude Code 세션 (기계 독자) | "절대 .env 커밋 금지" 같은 AI 행동 규칙 + 코드 패턴. 사람도 읽어도 OK |
+
+> **README 와 다른 docs 의 차이**: README 는 "왜 흥미로운가" 를 보여주는 입구. docs/ 는 "어떻게 동작하는가" 의 깊은 매뉴얼.
+> **STRATEGIES vs HARNESS 차이**: STRATEGIES = 거래 로직 (도메인). HARNESS = 그 로직을 검증하는 인프라 (엔지니어링).
+> **SETUP vs SCHEDULES 차이**: SETUP = 처음 설치 (1회성). SCHEDULES = 매일 운영 (반복).
+> **BACKTESTS vs JOURNEY 차이**: BACKTESTS = 결과 숫자 (정적). JOURNEY = 결정 과정 (시간순).
+> **DESIGN_DOC vs README 차이**: DESIGN_DOC = Day 1 의 출발점 (변경 X). README = Day 8 의 도착점 (현재 상태).
 
 ---
 
