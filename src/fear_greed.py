@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import requests
@@ -134,6 +134,12 @@ def fetch_history(limit: int = 0) -> dict[str, int]:
 
     limit=0 이면 전체 (Alternative.me 는 2018-02 부터 시작).
     백테스트용.
+
+    [B6 fix] timestamp → UTC date 명시 변환.
+      - alternative.me timestamp 는 그 날의 00:00:00 UTC 기준
+      - 이전엔 datetime.fromtimestamp() (로컬 timezone) 사용 → 머신
+        timezone 에 따라 날짜 ±1일 흔들림
+      - 이제 UTC 명시 → 백테스트가 어느 머신에서 돌아도 일관된 매핑
     """
     url = f"https://api.alternative.me/fng/?limit={limit}"
     try:
@@ -147,7 +153,8 @@ def fetch_history(limit: int = 0) -> dict[str, int]:
     for d in data:
         try:
             ts = int(d["timestamp"])
-            date_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            # UTC 명시 (B6 fix): alternative.me ts = 그 날 00:00 UTC
+            date_str = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
             result[date_str] = int(d["value"])
         except (KeyError, ValueError, TypeError):
             continue

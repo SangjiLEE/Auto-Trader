@@ -82,6 +82,9 @@ class BacktestStateV4:
     fg_extreme_greed_days: int = 0
     fg_buy_actions: int = 0
     fg_sell_actions: int = 0
+    # [B6 fix] 정확한 P&L 회계용 — 현재 사이클의 cash flow 추적
+    position_cost: float = 0.0       # 누적 매수 금액 (commission 포함, 현금 유출)
+    position_proceeds: float = 0.0   # 누적 매도 금액 (commission 차감, 현금 유입)
 
 
 def equity(state: BacktestStateV4, price: float) -> float:
@@ -97,6 +100,7 @@ def buy(state: BacktestStateV4, qty: int, price: float, date: pd.Timestamp, regi
             return
         cost = qty * price * (1 + COMMISSION / 2)
     state.cash -= cost
+    state.position_cost += cost  # B6: 정확한 P&L 회계
 
     if state.position is None:
         state.position = PositionV4(
@@ -124,25 +128,40 @@ def buy(state: BacktestStateV4, qty: int, price: float, date: pd.Timestamp, regi
 def sell_partial(state: BacktestStateV4, qty: int, price: float, date: pd.Timestamp, reason: str, fg_sell: bool) -> None:
     if state.position is None or qty <= 0 or qty > state.position.qty:
         return
-    state.cash += qty * price * (1 - COMMISSION / 2)
+    proceeds = qty * price * (1 - COMMISSION / 2)
+    state.cash += proceeds
+    state.position_proceeds += proceeds  # B6: 정확한 P&L 회계
     state.position.qty -= qty
     if fg_sell:
         state.position.fg_sells += 1
         state.fg_sell_actions += 1
     if state.position.qty <= 0:
-        # 완전 청산 처리
-        sell_full_finalize(state, price, date, reason)
+        # 완전 청산 처리 (cash 는 이미 +proceeds 됨)
+        sell_full_finalize(state, price, date, reason, already_settled=True)
 
 
-def sell_full_finalize(state: BacktestStateV4, price: float, date: pd.Timestamp, reason: str) -> None:
-    """qty 0 도달 시 호출되는 마무리. completed_trades 기록."""
+def sell_full_finalize(
+    state: BacktestStateV4,
+    price: float,
+    date: pd.Timestamp,
+    reason: str,
+    already_settled: bool = False,
+) -> None:
+    """qty 0 도달 시 호출되는 마무리. completed_trades 기록.
+
+    [B6 fix] 정확한 P&L:
+      pnl     = position_proceeds - position_cost  (실측 cash flow)
+      pnl_pct = pnl / position_cost
+    이전엔 (price - avg_price) * initial_qty 로 근사 → 부분익절/DCA/F&G
+    분할매수 후 매우 부정확. 이제 실측.
+    """
     pos = state.position
     if pos is None:
         return
 
-    # 단순화: pnl_pct 는 (price - avg_price) / avg_price (원금 기준 추정)
-    pnl_pct = (price - pos.avg_price) / pos.avg_price if pos.avg_price > 0 else 0
-    pnl = (price - pos.avg_price) * pos.initial_qty  # 추정
+    # B6 fix: 실측 P&L (cash flow 기준)
+    pnl = state.position_proceeds - state.position_cost
+    pnl_pct = pnl / state.position_cost if state.position_cost > 0 else 0
 
     state.completed_trades.append(CompletedTradeV4(
         symbol="", entry_date=pos.entry_date, exit_date=date,
@@ -157,50 +176,100 @@ def sell_full_finalize(state: BacktestStateV4, price: float, date: pd.Timestamp,
     state.last_exit_price = price
     state.last_exit_date = date
     state.position = None
+    # 새 사이클 위해 회계 리셋
+    state.position_cost = 0.0
+    state.position_proceeds = 0.0
 
 
 def sell_full(state: BacktestStateV4, price: float, date: pd.Timestamp, reason: str) -> None:
     if state.position is None:
         return
     qty = state.position.qty
-    state.cash += qty * price * (1 - COMMISSION / 2)
+    proceeds = qty * price * (1 - COMMISSION / 2)
+    state.cash += proceeds
+    state.position_proceeds += proceeds  # B6: 정확한 P&L 회계
     state.position.qty = 0
-    sell_full_finalize(state, price, date, reason)
+    sell_full_finalize(state, price, date, reason, already_settled=True)
+
+
+def _prev_trading_day_fg(
+    fg_history: dict[str, int],
+    today: pd.Timestamp,
+    max_lookback: int = 7,
+    default: int = 50,
+) -> int:
+    """[B6 fix] D 일 매매 시 D-1 이전의 마지막으로 발표된 F&G 사용.
+
+    F&G 는 alternative.me 에서 그 날 23:59 UTC 에 발표.
+    D 일 close 시점 (KRX 06:30 UTC) 에는 D 일 F&G 아직 미발표.
+    → D-1 (또는 그 이전 가용) 값 사용. 휴일 등으로 빠진 날 백오프.
+    """
+    for offset in range(1, max_lookback + 1):
+        date_str = (today - pd.Timedelta(days=offset)).strftime("%Y-%m-%d")
+        if date_str in fg_history:
+            return fg_history[date_str]
+    return default
 
 
 def run_backtest(
     df: pd.DataFrame,
     fg_history: dict[str, int],
     initial_capital: float = INITIAL_CAPITAL,
+    execution_lag: int = 1,
 ) -> BacktestStateV4:
+    """
+    [B5 + B6 fix] v4 백테스트.
+
+    - F&G: D-1 이전 발표값 사용 (look-ahead 제거)
+    - 매매: D close 시그널 → (D+execution_lag) open 매매 (라이브 align)
+    - P&L: 실측 cash flow 기반 (sell_full_finalize)
+    """
     state = BacktestStateV4(cash=initial_capital)
     dates = df.index.tolist()
+    n = len(dates)
 
     for i, date in enumerate(dates):
         row = df.iloc[i]
-        price = float(row["close"]) if pd.notna(row["close"]) else None
-        if price is None:
+        close = float(row["close"]) if pd.notna(row["close"]) else None
+        if close is None:
             state.equity_curve[date] = equity(state, state.position.avg_price if state.position else 0)
             continue
 
-        date_str = pd.Timestamp(date).strftime("%Y-%m-%d")
-        fg_value = fg_history.get(date_str, 50)
+        # equity = D close 기준 mark-to-market
+        state.equity_curve[date] = equity(state, close)
+
+        # B6 fix: D 일 매매 시 D-1 이전 F&G 사용 (look-ahead 제거)
+        fg_value = _prev_trading_day_fg(fg_history, pd.Timestamp(date))
+
+        # B5 fix: 매매 가격 = (D + execution_lag) open
+        trade_idx = i + execution_lag
+        if execution_lag > 0:
+            if trade_idx >= n:
+                continue
+            trade_row = df.iloc[trade_idx]
+            t_open = trade_row.get("open")
+            t_close = trade_row.get("close")
+            if pd.isna(t_open) and pd.isna(t_close):
+                continue
+            trade_price = float(t_open) if pd.notna(t_open) else float(t_close)
+            trade_date = dates[trade_idx]
+        else:
+            trade_price = close
+            trade_date = date
 
         # 1. F&G 극단 처리
         if fg_value <= FG_EXTREME_FEAR_THRESHOLD:
             state.fg_extreme_fear_days += 1
             cash_to_use = state.cash * SPLIT_BUY_RATIO
-            qty = int(cash_to_use / price) if price > 0 else 0
+            qty = int(cash_to_use / trade_price) if trade_price > 0 else 0
             if qty > 0:
                 regime = mr.detect_regime(row)
-                buy(state, qty, price, date, regime, fg_buy=True)
-            state.equity_curve[date] = equity(state, price)
+                buy(state, qty, trade_price, trade_date, regime, fg_buy=True)
             continue
 
         if fg_value >= FG_EXTREME_GREED_THRESHOLD:
             state.fg_extreme_greed_days += 1
             if state.position is not None:
-                # BULL 모드면 F&G 매도 건너뛰기 (v3 익절 우선)
                 skip_fg_sell = (
                     SKIP_FG_SELL_IN_BULL
                     and state.position.entry_regime == mr.REGIME_BULL
@@ -209,17 +278,13 @@ def run_backtest(
                     qty_to_sell = max(int(state.position.qty * SPLIT_SELL_RATIO), 1) if state.position.qty > 0 else 0
                     if qty_to_sell > 0:
                         sell_partial(
-                            state, qty_to_sell, price, date,
+                            state, qty_to_sell, trade_price, trade_date,
                             f"F&G {fg_value} 극탐 분할매도", fg_sell=True,
                         )
-            # 매도 안 했어도 v3 정상 청산은 계속 진행 (continue 없음)
-            # 단, 신규 진입은 막아야 (이미 차단)
-            state.equity_curve[date] = equity(state, price)
             continue
 
-        # 2. 정상 v3 로직
+        # 2. 정상 v3 로직 (D close 시그널 평가, trade_price 매매)
         if state.position is not None:
-            # v3 청산 체크 (PositionV3 형태로 변환 필요)
             tmp_pos = v3.PositionV3(
                 qty=state.position.qty, avg_price=state.position.avg_price,
                 entry_date=state.position.entry_date,
@@ -231,8 +296,8 @@ def run_backtest(
                 trailing_active=state.position.trailing_active,
                 dca_done=state.position.dca_done,
             )
-            actions = v3.check_exit_v3(tmp_pos, row, date) if False else v3.check_exit_v3(row, tmp_pos, date)
-            # 상태 동기화
+            actions = v3.check_exit_v3(row, tmp_pos, date)
+            # 상태 동기화 (peak/플래그)
             state.position.peak_price = tmp_pos.peak_price
             state.position.pf_t1_done = tmp_pos.pf_t1_done
             state.position.pf_t2_done = tmp_pos.pf_t2_done
@@ -241,40 +306,37 @@ def run_backtest(
             if actions:
                 for action in actions:
                     if action.type == "SELL_PARTIAL":
-                        sell_partial(state, action.qty, price, date, action.reason, fg_sell=False)
+                        sell_partial(state, action.qty, trade_price, trade_date, action.reason, fg_sell=False)
                     elif action.type == "SELL_ALL":
-                        sell_full(state, price, date, action.reason)
+                        sell_full(state, trade_price, trade_date, action.reason)
                         break
 
             if state.position is not None:
                 dca = v3.check_dca(row, tmp_pos)
                 if dca is not None:
-                    buy(state, dca.qty, price, date, state.position.entry_regime, fg_buy=False)
+                    buy(state, dca.qty, trade_price, trade_date, state.position.entry_regime, fg_buy=False)
         else:
-            # v3 진입 체크
-            if i >= 1:
-                regime_today = mr.detect_regime(row)
-                params = v3.get_params(regime_today)
-                if not params.get("block_entry"):
-                    prev_row = df.iloc[i - 1]
-                    sig = v3.check_entry(prev_row, regime_today)
-                    if sig.valid:
-                        # 재진입 쿨다운
-                        ok_to_reenter = True
-                        if state.last_exit_date is not None:
-                            cooldown = params.get("reentry_cooldown_days", 3)
-                            days_since = (date - state.last_exit_date).days
-                            if days_since < cooldown:
-                                ok_to_reenter = False
-                        if ok_to_reenter:
-                            ratio = params["initial_buy_ratio"]
-                            target_alloc = state.cash * ratio
-                            qty = int(target_alloc / price)
-                            if qty > 0:
-                                buy(state, qty, price, date, regime_today, fg_buy=False)
+            # v3 진입 체크 — D close 의 indicators 사용
+            regime_today = mr.detect_regime(row)
+            params = v3.get_params(regime_today)
+            if not params.get("block_entry"):
+                sig = v3.check_entry(row, regime_today)
+                if sig.valid:
+                    # 재진입 쿨다운
+                    ok_to_reenter = True
+                    if state.last_exit_date is not None:
+                        cooldown = params.get("reentry_cooldown_days", 3)
+                        days_since = (trade_date - state.last_exit_date).days
+                        if days_since < cooldown:
+                            ok_to_reenter = False
+                    if ok_to_reenter:
+                        ratio = params["initial_buy_ratio"]
+                        target_alloc = state.cash * ratio
+                        qty = int(target_alloc / trade_price)
+                        if qty > 0:
+                            buy(state, qty, trade_price, trade_date, regime_today, fg_buy=False)
 
-        state.equity_curve[date] = equity(state, price)
-
+    # 백테스트 끝 잔여 포지션 강제 청산 (마지막 close)
     if state.position is not None and dates:
         last_date = dates[-1]
         last_price = float(df.iloc[-1]["close"])
