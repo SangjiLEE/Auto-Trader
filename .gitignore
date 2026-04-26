@@ -1,0 +1,58 @@
+# 환경변수 (API 키, 계좌번호 등 절대 공유 금지)
+.env
+.env.local
+.env.*.local
+
+# 토큰 캐시 (access token 들어있음, 민감 정보)
+.token_cache.json
+
+# F&G 캐시 (민감 정보는 아니지만 런타임 캐시)
+.fear_greed_cache.json
+
+# 에디터/도구 메타
+.omc/
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / React (나중에 추가될 프론트엔드용)
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+
+# DB / 데이터
+*.db
+*.sqlite
+*.sqlite3
+data/
+*.parquet
+*.csv
+
+# 로그
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 백테스트 결과 (민감 정보는 아니지만 용량 큼)
+backtest_results/

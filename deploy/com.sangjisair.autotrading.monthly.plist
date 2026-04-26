@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sangjisair.autotrading.monthly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd "$HOME/projects/auto-trading-bot" &amp;&amp; "$HOME/projects/auto-trading-bot/.venv/bin/python" -m src.monthly_rebalance --refresh --execute --yes</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+        <dict><key>Day</key><integer>7</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>5</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/monthly.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/monthly.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>LANG</key>
+        <string>ko_KR.UTF-8</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot</string>
+</dict>
+</plist>

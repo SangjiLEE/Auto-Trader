@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sangjisair.autotrading.morning</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd "/Users/sangjisair/Desktop/내가 만든 웹/workspace/auto-trading-bot" &amp;&amp; source .venv/bin/activate &amp;&amp; python -m src.monthly_rebalance --refresh --execute --yes</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Year</key>
+        <integer>2026</integer>
+        <key>Month</key>
+        <integer>4</integer>
+        <key>Day</key>
+        <integer>21</integer>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sangjisair/Desktop/내가 만든 웹/workspace/auto-trading-bot/logs/morning.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sangjisair/Desktop/내가 만든 웹/workspace/auto-trading-bot/logs/morning.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>LANG</key>
+        <string>ko_KR.UTF-8</string>
+    </dict>
+</dict>
+</plist>
