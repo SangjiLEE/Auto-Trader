@@ -53,6 +53,51 @@ def momentum_13612u(monthly_prices: pd.DataFrame) -> pd.DataFrame:
     return 12 * r1 + 4 * r3 + 2 * r6 + 1 * r12
 
 
+def vaa_signal_breadth(
+    prices: pd.DataFrame,
+    offensive: list[str],
+    defensive: list[str],
+    breadth_threshold: float = 1.0,
+) -> pd.Series:
+    """
+    VAA breadth 변형 — 카나리 임계 조정 가능.
+
+    breadth_threshold=1.0: 표준 (모든 offensive 양수면 risk-on)
+    breadth_threshold=0.75: 75% 이상 양수면 risk-on (덜 보수적)
+    breadth_threshold=0.50: 절반 양수면 risk-on (적극적)
+
+    낮을수록 risk-on 자주 → 강세장 더 따라잡지만 위기 회피 ↓.
+    """
+    monthly = prices.resample("ME").last()
+    if not monthly.empty and not prices.empty:
+        if prices.index[-1] < monthly.index[-1]:
+            monthly = monthly.iloc[:-1]
+    score = momentum_13612u(monthly)
+
+    choices: list[str] = []
+    for dt in monthly.index:
+        off_syms = [s for s in offensive if s in score.columns]
+        off_scores = score.loc[dt, off_syms]
+        if off_scores.isna().any() or off_scores.empty:
+            choices.append(CASH_LABEL)
+            continue
+
+        positive_ratio = (off_scores > 0).sum() / len(off_scores)
+        if positive_ratio >= breadth_threshold:
+            choices.append(str(off_scores.idxmax()))
+        else:
+            def_syms = [s for s in defensive if s in score.columns]
+            def_scores = score.loc[dt, def_syms]
+            if def_scores.empty or def_scores.isna().all():
+                choices.append(CASH_LABEL)
+            elif def_scores.max() > 0:
+                choices.append(str(def_scores.idxmax()))
+            else:
+                choices.append(CASH_LABEL)
+
+    return pd.Series(choices, index=monthly.index)
+
+
 def vaa_signal(
     prices: pd.DataFrame,
     offensive: list[str],
