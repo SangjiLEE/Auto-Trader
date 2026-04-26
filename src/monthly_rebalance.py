@@ -213,12 +213,22 @@ def log_trade(
         )
 
 
+def _query_holdings(token: str) -> dict[str, int]:
+    """[B2 fix] KR 잔고 → {symbol: qty}."""
+    holdings, _, _ = fetch_positions(token)
+    return holdings
+
+
 def execute_orders(
     orders: list[tuple[str, str, int]],
     prices: dict[str, int],
     token: str,
 ) -> list[dict]:
-    """주문 실제 전송. paper 모드에서만."""
+    """주문 실제 전송. paper 모드에서만.
+
+    [B2 fix] 주문 전후 잔고 차분으로 실제 체결량 검증.
+    부분 체결 / 거부 시 정확한 qty 만 DB 기록 → DB-broker 동기 유지.
+    """
     if config.KIS_ENV != "paper":
         raise RuntimeError(
             "실거래 모드에선 차단. .env에서 KIS_ENV=paper 확인"
@@ -226,7 +236,7 @@ def execute_orders(
 
     results: list[dict] = []
     print("\n" + "=" * 64)
-    print("주문 전송 중...")
+    print("주문 전송 중... (B2: fill check via 잔고 차분)")
     print("=" * 64)
 
     for i, (side, symbol, qty) in enumerate(orders, 1):
@@ -235,6 +245,15 @@ def execute_orders(
         price = prices.get(symbol, 0)
 
         print(f"\n[{i}/{len(orders)}] {side_ko} {symbol} {qty}주...")
+
+        # B2: 사전 잔고
+        try:
+            pre_holdings = _query_holdings(token)
+        except Exception as e:
+            print(f"  [B2] 사전 잔고 조회 실패: {e} — fill check 스킵")
+            pre_holdings = None
+        pre_qty = pre_holdings.get(symbol, 0) if pre_holdings else 0
+
         try:
             result = place_order.place_market_order(
                 symbol, qty, side_param, token
@@ -243,26 +262,61 @@ def execute_orders(
             odno = output.get("ODNO", "?")
             msg = result.get("msg1", "")
 
-            print(f"  성공. 주문번호 {odno}  |  {msg}")
-            results.append({
-                "status": "OK",
-                "side": side,
-                "symbol": symbol,
-                "qty": qty,
-                "price": price,
-                "odno": odno,
-                "msg": msg,
-            })
-            log_trade(symbol, side_param, qty, price, odno, msg)
+            # B2: 체결 대기 + 사후 잔고
+            time.sleep(4.0)
+            filled_qty = qty  # 기본값 (잔고 조회 실패 시 fallback)
+            fill_status = "FILLED"
+
+            if pre_holdings is not None:
+                try:
+                    post_holdings = _query_holdings(token)
+                    post_qty = post_holdings.get(symbol, 0)
+                    delta = post_qty - pre_qty
+                    actual = delta if side_param == "buy" else -delta
+                    if actual < 0:
+                        actual = 0
+                    filled_qty = actual
+                    if filled_qty == 0:
+                        fill_status = "REJECTED"
+                    elif filled_qty < qty:
+                        fill_status = "PARTIAL"
+                    else:
+                        fill_status = "FILLED"
+                except Exception as e:
+                    print(f"  [B2] 사후 잔고 조회 실패: {e} — 요청량 가정")
+
+            if fill_status == "REJECTED":
+                print(f"  ❌ REJECTED 주문번호 {odno} — 미체결 (msg: {msg})")
+                results.append({
+                    "status": "ERROR", "side": side, "symbol": symbol,
+                    "qty": qty, "filled_qty": 0,
+                    "error": f"REJECTED: {msg}", "odno": odno,
+                })
+            elif fill_status == "PARTIAL":
+                print(f"  ⚠️ PARTIAL {filled_qty}/{qty}주 @ {price:,} (주문 {odno})")
+                log_trade(symbol, side_param, filled_qty, price, odno,
+                          f"PARTIAL {filled_qty}/{qty} | {msg}")
+                results.append({
+                    "status": "OK", "side": side, "symbol": symbol,
+                    "qty": filled_qty, "filled_qty": filled_qty,
+                    "price": price, "odno": odno, "msg": msg,
+                    "fill_status": "PARTIAL",
+                })
+            else:
+                print(f"  ✅ FILLED {filled_qty}주 @ {price:,} (주문 {odno})")
+                log_trade(symbol, side_param, filled_qty, price, odno, msg)
+                results.append({
+                    "status": "OK", "side": side, "symbol": symbol,
+                    "qty": filled_qty, "filled_qty": filled_qty,
+                    "price": price, "odno": odno, "msg": msg,
+                    "fill_status": "FILLED",
+                })
 
         except kis_api.KISAPIError as e:
-            print(f"  실패: {e}")
+            print(f"  ❌ API 오류: {e}")
             results.append({
-                "status": "ERROR",
-                "side": side,
-                "symbol": symbol,
-                "qty": qty,
-                "error": str(e),
+                "status": "ERROR", "side": side, "symbol": symbol,
+                "qty": qty, "error": str(e),
             })
 
         # 레이트리밋 여유 (KIS는 주문 API 초당 몇 건 제한)

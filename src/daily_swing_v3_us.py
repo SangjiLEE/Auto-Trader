@@ -17,6 +17,7 @@ from datetime import date
 import pandas as pd
 
 from . import check_balance
+from . import check_overseas_balance
 from . import check_overseas_price
 from . import config
 from . import db
@@ -223,6 +224,93 @@ def _load_position_state(symbol: str) -> dict | None:
         "dca_done": bool(row["dca_done"]),
         "peak_price": float(row["peak_price"] or 0),
         "entry_regime": row["entry_regime"] or mr.REGIME_RANGE,
+    }
+
+
+def _query_us_holdings(token: str) -> dict[str, int]:
+    """KIS US 잔고 → {symbol: qty}.
+
+    [B2 fix] 주문 전후 잔고 차분으로 실제 체결량 확인.
+    """
+    holdings = check_overseas_balance.fetch_all_us_holdings(token)
+    return {h["symbol"]: h["qty"] for h in holdings}
+
+
+def _execute_with_fill_check_us(
+    sym: str,
+    side: str,
+    requested_qty: int,
+    token: str,
+    wait_seconds: float = 6.0,  # US 는 KR 보다 약간 더 (해외 지연 고려)
+) -> dict:
+    """[B2 fix] US 주문 → 잔고 차분으로 실제 체결량 확인."""
+    try:
+        pre_holdings = _query_us_holdings(token)
+    except Exception as e:
+        print(f"  [B2] US 사전 잔고 조회 실패: {e} — fill check 스킵")
+        pre_holdings = None
+
+    pre_qty = pre_holdings.get(sym, 0) if pre_holdings else 0
+
+    res = place_overseas_order.place_market_like_order(
+        sym, requested_qty, side, token, buffer=ORDER_PRICE_BUFFER
+    )
+    out = res.get("output", {})
+    odno = out.get("ODNO", "?")
+    msg = res.get("msg1", "")
+
+    time.sleep(wait_seconds)
+
+    if pre_holdings is None:
+        try:
+            p = check_overseas_price.fetch_price(sym, token)
+            price = float(p.get("output", {}).get("last") or 0)
+        except Exception:
+            price = 0.0
+        return {
+            "order_id": odno, "msg": msg,
+            "requested_qty": requested_qty, "filled_qty": requested_qty,
+            "price": price, "status": "FILLED",
+        }
+
+    try:
+        post_holdings = _query_us_holdings(token)
+    except Exception as e:
+        print(f"  [B2] US 사후 잔고 조회 실패: {e} — fallback FILLED")
+        try:
+            p = check_overseas_price.fetch_price(sym, token)
+            price = float(p.get("output", {}).get("last") or 0)
+        except Exception:
+            price = 0.0
+        return {
+            "order_id": odno, "msg": msg,
+            "requested_qty": requested_qty, "filled_qty": requested_qty,
+            "price": price, "status": "FILLED",
+        }
+
+    post_qty = post_holdings.get(sym, 0)
+    delta = post_qty - pre_qty
+    filled_qty = delta if side == "buy" else -delta
+    if filled_qty < 0:
+        filled_qty = 0
+
+    try:
+        p = check_overseas_price.fetch_price(sym, token)
+        price = float(p.get("output", {}).get("last") or 0)
+    except Exception:
+        price = 0.0
+
+    if filled_qty == 0:
+        status = "REJECTED"
+    elif filled_qty < requested_qty:
+        status = "PARTIAL"
+    else:
+        status = "FILLED"
+
+    return {
+        "order_id": odno, "msg": msg,
+        "requested_qty": requested_qty, "filled_qty": filled_qty,
+        "price": price, "status": status,
     }
 
 
@@ -543,31 +631,46 @@ def main() -> int:
         _persist_position_states(positions)  # B4: 취소도 state 보존
         return 0
 
-    print("\n주문 전송 중...")
+    print("\n주문 전송 중... (B2: fill check via US 잔고 차분)")
     results = []
     for i, a in enumerate(actions, 1):
         side_lower = a["action"].lower()
         sym = a["symbol"]
-        qty = a["qty"]
-        print(f"\n[{i}/{len(actions)}] {a['action']} {sym} {qty}주...")
+        requested_qty = a["qty"]
+        print(f"\n[{i}/{len(actions)}] {a['action']} {sym} {requested_qty}주...")
         try:
-            res = place_overseas_order.place_market_like_order(
-                sym, qty, side_lower, token, buffer=ORDER_PRICE_BUFFER
+            fill = _execute_with_fill_check_us(
+                sym, side_lower, requested_qty, token, wait_seconds=6.0,
             )
-            out = res.get("output", {})
-            odno = out.get("ODNO", "?")
-            msg = res.get("msg1", "")
-            print(f"  성공. {odno}")
-            price_usd = 0.0
-            try:
-                p = check_overseas_price.fetch_price(sym, token)
-                price_usd = float(p.get("output", {}).get("last") or 0)
-            except Exception:
-                pass
-            log_trade(sym, side_lower, qty, price_usd, odno, msg, a["reason"])
-            results.append({**a, "status": "OK", "price": price_usd})
+            odno = fill["order_id"]
+            filled = fill["filled_qty"]
+            price = fill["price"]
+            status = fill["status"]
+            msg = fill["msg"]
+
+            if status == "REJECTED":
+                print(f"  ❌ REJECTED 주문번호 {odno} — 미체결 (msg: {msg})")
+                results.append({
+                    **a, "status": "ERROR", "filled_qty": 0,
+                    "fill_status": "REJECTED", "error": f"미체결: {msg}",
+                })
+            elif status == "PARTIAL":
+                print(f"  ⚠️ PARTIAL {filled}/{requested_qty}주 @ ${price:.2f} (주문 {odno})")
+                log_trade(sym, side_lower, filled, price, odno,
+                          f"PARTIAL {filled}/{requested_qty} | {msg}", a["reason"])
+                results.append({
+                    **a, "status": "OK", "qty": filled, "filled_qty": filled,
+                    "price": price, "fill_status": "PARTIAL",
+                })
+            else:
+                print(f"  ✅ FILLED {filled}주 @ ${price:.2f} (주문 {odno})")
+                log_trade(sym, side_lower, filled, price, odno, msg, a["reason"])
+                results.append({
+                    **a, "status": "OK", "qty": filled, "filled_qty": filled,
+                    "price": price, "fill_status": "FILLED",
+                })
         except (kis_api.KISAPIError, RuntimeError) as e:
-            print(f"  실패: {e}")
+            print(f"  ❌ API 오류: {e}")
             results.append({**a, "status": "ERROR", "error": str(e)})
         if i < len(actions):
             time.sleep(0.5)

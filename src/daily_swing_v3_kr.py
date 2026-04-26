@@ -255,6 +255,131 @@ def get_v3_positions(symbol_data: dict[str, pd.DataFrame]) -> dict[str, v3.Posit
     return positions
 
 
+def _query_kr_holdings(token: str) -> dict[str, int]:
+    """KIS KR 잔고 → {symbol: qty}.
+
+    [B2 fix] 주문 전후 잔고 차분으로 실제 체결량 확인하기 위한 helper.
+    """
+    data = check_balance.fetch_balance(token)
+    output1 = data.get("output1", [])
+    holdings: dict[str, int] = {}
+    for h in output1:
+        sym = (h.get("pdno") or "").strip()
+        try:
+            qty = int(h.get("hldg_qty") or 0)
+        except (ValueError, TypeError):
+            qty = 0
+        if sym and qty > 0:
+            holdings[sym] = qty
+    return holdings
+
+
+def _execute_with_fill_check(
+    sym: str,
+    side: str,
+    requested_qty: int,
+    token: str,
+    wait_seconds: float = 4.0,
+) -> dict:
+    """[B2 fix] 주문 → 대기 → 잔고 재조회 → 실제 체결량 추정.
+
+    문제: 기존 코드는 주문 수락(API 200) = 체결 가정. 실제로는 KIS 가
+    수락만 하고 부분/지연/거부 가능. 거기에 fresh quote 를 trade price
+    로 로깅 → DB 가 broker 와 동기 깨짐.
+
+    해결: 주문 전후 잔고 스냅샷 차이 = 실제 체결량 (broker 가 source of truth).
+    가격은 quote (근사) — 정확한 fill price 추출은 KIS inquire-order API
+    필요하지만 환경별 tr_id 차이 등 복잡성 있어 추후 별도 작업.
+
+    반환:
+      {
+        "order_id": ODNO,
+        "msg": KIS 응답 메시지,
+        "requested_qty": 요청 수량,
+        "filled_qty": 실제 체결량 (잔고 차분 기반),
+        "price": 체결가 추정 (현재 quote),
+        "status": "FILLED" | "PARTIAL" | "REJECTED",
+      }
+    """
+    # 1. 주문 전 잔고 스냅샷
+    try:
+        pre_holdings = _query_kr_holdings(token)
+    except Exception as e:
+        print(f"  [B2] 사전 잔고 조회 실패: {e} — fill check 스킵, legacy 동작")
+        pre_holdings = None
+
+    pre_qty = pre_holdings.get(sym, 0) if pre_holdings else 0
+
+    # 2. 주문 실행 (예외는 caller 가 처리)
+    res = place_order.place_market_order(sym, requested_qty, side, token)
+    out = res.get("output", {})
+    odno = out.get("ODNO", "?")
+    msg = res.get("msg1", "")
+
+    # 3. 체결 대기
+    time.sleep(wait_seconds)
+
+    # 4. 주문 후 잔고 스냅샷
+    if pre_holdings is None:
+        # 사전 조회 실패 시 fill check 무의미 — 요청량 그대로 가정
+        try:
+            p_data = check_price.fetch_price(sym, token)
+            price = int(p_data.get("output", {}).get("stck_prpr") or 0)
+        except Exception:
+            price = 0
+        return {
+            "order_id": odno, "msg": msg,
+            "requested_qty": requested_qty, "filled_qty": requested_qty,
+            "price": price, "status": "FILLED",
+        }
+
+    try:
+        post_holdings = _query_kr_holdings(token)
+    except Exception as e:
+        print(f"  [B2] 사후 잔고 조회 실패: {e} — 요청량 가정 (fallback)")
+        try:
+            p_data = check_price.fetch_price(sym, token)
+            price = int(p_data.get("output", {}).get("stck_prpr") or 0)
+        except Exception:
+            price = 0
+        return {
+            "order_id": odno, "msg": msg,
+            "requested_qty": requested_qty, "filled_qty": requested_qty,
+            "price": price, "status": "FILLED",
+        }
+
+    post_qty = post_holdings.get(sym, 0)
+
+    # 5. 차분 → 실제 체결량
+    delta = post_qty - pre_qty
+    filled_qty = delta if side == "buy" else -delta
+
+    # 음수 방지 (다른 outflow 있을 가능성 — 보수적으로 0)
+    if filled_qty < 0:
+        filled_qty = 0
+
+    # 6. 가격 (현재 quote — 근사)
+    try:
+        p_data = check_price.fetch_price(sym, token)
+        price = int(p_data.get("output", {}).get("stck_prpr") or 0)
+    except Exception:
+        price = 0
+
+    # 7. 상태 판정
+    if filled_qty == 0:
+        status = "REJECTED"
+    elif filled_qty < requested_qty:
+        status = "PARTIAL"
+    else:
+        status = "FILLED"
+
+    return {
+        "order_id": odno, "msg": msg,
+        "requested_qty": requested_qty, "filled_qty": filled_qty,
+        "price": price, "status": status,
+    }
+
+
 def _persist_position_states(
     positions: dict[str, v3.PositionV3],
     results: list[dict] | None = None,
@@ -576,28 +701,49 @@ def main() -> int:
         print("취소됨.")
         return 0
 
-    print("\n주문 전송 중...")
+    print("\n주문 전송 중... (B2: fill check via 잔고 차분)")
     results = []
     for i, a in enumerate(actions, 1):
         side_lower = a["action"].lower()
         sym = a["symbol"]
-        qty = a["qty"]
-        print(f"\n[{i}/{len(actions)}] {a['action']} {sym} {qty}주...")
+        requested_qty = a["qty"]
+        print(f"\n[{i}/{len(actions)}] {a['action']} {sym} {requested_qty}주...")
         try:
-            res = place_order.place_market_order(sym, qty, side_lower, token)
-            out = res.get("output", {})
-            odno = out.get("ODNO", "?")
-            msg = res.get("msg1", "")
-            print(f"  성공. {odno}")
-            try:
-                p_data = check_price.fetch_price(sym, token)
-                price = int(p_data.get("output", {}).get("stck_prpr") or 0)
-            except Exception:
-                price = 0
-            log_trade(sym, side_lower, qty, price, odno, msg, a["reason"])
-            results.append({**a, "status": "OK", "price": price})
+            fill = _execute_with_fill_check(
+                sym, side_lower, requested_qty, token, wait_seconds=4.0,
+            )
+            odno = fill["order_id"]
+            filled = fill["filled_qty"]
+            price = fill["price"]
+            status = fill["status"]
+            msg = fill["msg"]
+
+            if status == "REJECTED":
+                # 미체결 → DB 에 trade 기록 X. 알림.
+                print(f"  ❌ REJECTED 주문번호 {odno} — 미체결 (msg: {msg})")
+                results.append({
+                    **a, "status": "ERROR", "filled_qty": 0,
+                    "fill_status": "REJECTED", "error": f"미체결: {msg}",
+                })
+            elif status == "PARTIAL":
+                # 부분 체결 → 실제 체결량만 DB 기록
+                print(f"  ⚠️ PARTIAL {filled}/{requested_qty}주 @ {price:,} (주문 {odno})")
+                log_trade(sym, side_lower, filled, price, odno,
+                          f"PARTIAL {filled}/{requested_qty} | {msg}", a["reason"])
+                results.append({
+                    **a, "status": "OK", "qty": filled, "filled_qty": filled,
+                    "price": price, "fill_status": "PARTIAL",
+                })
+            else:
+                # FILLED — 정상 체결
+                print(f"  ✅ FILLED {filled}주 @ {price:,} (주문 {odno})")
+                log_trade(sym, side_lower, filled, price, odno, msg, a["reason"])
+                results.append({
+                    **a, "status": "OK", "qty": filled, "filled_qty": filled,
+                    "price": price, "fill_status": "FILLED",
+                })
         except kis_api.KISAPIError as e:
-            print(f"  실패: {e}")
+            print(f"  ❌ API 오류: {e}")
             results.append({**a, "status": "ERROR", "error": str(e)})
         if i < len(actions):
             time.sleep(0.5)
