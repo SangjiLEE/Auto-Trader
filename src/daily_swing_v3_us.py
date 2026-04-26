@@ -540,6 +540,10 @@ def main() -> int:
                 fg_targeted.add(sym)
 
     print("\n[진입 체크]")
+    # [Phase 2] US 슬리브 시장-와이드 체제 (SPY 기반) — BEAR 시 신규 진입 차단
+    sleeve_regime = mr.detect_market_regime("US")
+    print(f"  US 슬리브 시장 체제 (SPY 기반): {sleeve_regime}")
+    sleeve_block_entry = sleeve_regime == mr.REGIME_BEAR
 
     # [B3 fix] MAX_POSITIONS 정확 카운팅:
     # - 부분익절 / F&G 분할매도 / DCA 매수 등은 포지션 수 변화 X
@@ -578,6 +582,12 @@ def main() -> int:
         if params.get("block_entry"):
             print(f"  {sym}: BEAR 차단 ({regime_today})")
             scan_results[sym] = f"{regime_today} 차단"
+            continue
+
+        # [Phase 2] US 슬리브 BEAR 시 신규 진입 차단
+        if sleeve_block_entry:
+            print(f"  {sym}: US 슬리브 BEAR ({sleeve_regime}) → 진입 차단")
+            scan_results[sym] = f"슬리브 {sleeve_regime} 차단"
             continue
 
         # F&G 진입 차단 체크

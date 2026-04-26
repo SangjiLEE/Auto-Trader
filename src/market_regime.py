@@ -56,3 +56,60 @@ def regime_distribution(df: pd.DataFrame) -> dict:
         REGIME_BEAR: counts.get(REGIME_BEAR, 0) / total if total else 0,
         REGIME_RANGE: counts.get(REGIME_RANGE, 0) / total if total else 0,
     }
+
+
+# ─── 슬리브별 시장-와이드 체제 (Codex 권장 — VIX 단독 대신) ───
+
+# KR 슬리브 → 069500 (KODEX 200)
+# US 슬리브 → SPY
+SLEEVE_BENCHMARKS = {
+    "KR": "069500",
+    "US": "SPY",
+}
+
+
+def detect_market_regime(sleeve: str = "KR") -> str:
+    """
+    슬리브 (KR/US) 의 시장-와이드 체제.
+
+    [Codex 권장 — Phase 2]:
+      기존 detect_regime() 은 거래 종목 자체의 200MA 사용 → 자기 참조적.
+      슬리브 진입 차단 결정에는 시장-와이드 신호 (KOSPI 200, SPY) 가 적절.
+
+    KR 슬리브: 069500 (KODEX 200) 의 종가/MA/ADX
+    US 슬리브: SPY 의 종가/MA/ADX
+
+    개별 종목 시그널은 그대로 detect_regime() 사용 (BULL/RANGE/BEAR 룰 결정).
+    슬리브 BEAR 면 → 그 슬리브 전체 신규 진입 차단.
+
+    반환: 'BULL' | 'BEAR' | 'RANGE' | 'UNAVAILABLE' (데이터 없음)
+    """
+    from . import db
+    from . import indicators
+
+    sleeve = sleeve.upper()
+    benchmark = SLEEVE_BENCHMARKS.get(sleeve)
+    if not benchmark:
+        return "UNAVAILABLE"
+
+    with db.connection() as conn:
+        df = pd.read_sql_query(
+            "SELECT date, open, high, low, close, volume FROM daily_candles "
+            "WHERE symbol = ? ORDER BY date DESC LIMIT 250",
+            conn, params=(benchmark,), parse_dates=["date"], index_col="date",
+        )
+
+    if df.empty or len(df) < 200:
+        return "UNAVAILABLE"
+
+    df = df.sort_index()
+    df = indicators.attach_all(df)
+    return detect_regime(df.iloc[-1])
+
+
+def get_sleeve_regime_summary() -> dict:
+    """KR / US 슬리브 체제 한눈 요약. 운영 보고서용."""
+    return {
+        "KR": detect_market_regime("KR"),
+        "US": detect_market_regime("US"),
+    }
