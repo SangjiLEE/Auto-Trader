@@ -295,3 +295,82 @@ launchctl load ~/Library/LaunchAgents/com.sangjisair.autotrading.<name>.plist
 - [docs/BACKTESTS.md](docs/BACKTESTS.md) — 백테스트 결과
 - [docs/JOURNEY.md](docs/JOURNEY.md) — 8일 진화 일지
 - [DESIGN_DOC.md](DESIGN_DOC.md) — 초기 설계
+
+---
+
+## gstack 사용 가이드 (이 프로젝트 특화)
+
+글로벌 gstack 컨텍스트는 `~/.claude/CLAUDE.md` 참고.
+이 프로젝트 (자동매매 봇) 에서 **특히 자주 쓸 스킬** 만 추림.
+
+### 새 전략 추가 시 워크플로우
+
+```
+1. /office-hours
+   → "이 전략이 진짜 필요한가" 6 가지 검증 질문
+   → BH 못 이기면 폐기, 이기면 다음 단계
+2. /plan-eng-review
+   → 전략 모듈 + 백테스트 모듈 설계 검토
+3. (코드 작성)
+4. /review
+   → PR 만들기 전 룩어헤드 바이어스, SQL, 트랜잭션 등 검증
+5. /ship
+   → 베이스 머지 + CI + PR 생성
+```
+
+특히 `/office-hours` 는 **평균회귀 / 단타 폐기 같은 시간낭비를 사전에
+차단하는 게이트**. 백테스트 돌리기 전에 한 번 실행 권장.
+
+### API 키 / 보안 변경 시
+
+```
+/cso   # 보안 감사
+```
+
+`.env` 처리, API 키 로깅 차단, hashkey 흐름 등을 검토. 실거래 모드
+(`KIS_ENV=real`) 전환 직전에 반드시 한 번 실행.
+
+### 디버깅 / 장애 시
+
+```
+/investigate   # 4 단계 근본 원인 조사 (Iron Law: no fixes without root cause)
+```
+
+특히 `launchd` 작업 실패, KIS API 오류, Telegram 알림 누락 같은 운영
+이슈에 적합. 임시 패치 막아주는 효과.
+
+### 작업 중단 / 재개
+
+```
+/context-save     # 현재 상태 저장 (DB, git, 진행 중인 결정)
+/context-restore  # 다음 세션에서 복원
+```
+
+자동매매 시스템은 **여러 세션에 걸친 백테스트 / 검증** 이 흔하므로 활용도 높음.
+
+### 주간 회고
+
+```
+/retro
+```
+
+매주 금요일 (US 마감 보고 후) 또는 일요일에 실행. 한 주의 자동 거래 결과 +
+코드 변경 + 다음 주 가설 정리.
+
+### gstack 에서 안 쓸 스킬 (이 프로젝트 한정)
+
+이 프로젝트는 **CLI 백엔드 자동매매** 라 다음은 사실상 불필요:
+
+- `/design-*` (UI 디자인) — 웹 프론트 X
+- `/qa`, `/devex-review`, `/canary`, `/land-and-deploy` — 라이브 사이트 / 배포 X
+- `/browse`, `/setup-browser-cookies` — 웹 자동화 X
+- `/benchmark` (페이지 성능) — 웹 X. 단 `/benchmark-models` (모델 비교) 는 활용 가능
+
+### 안전 모드 (실거래 전환 시)
+
+```
+/guard   # /careful + /freeze 동시 적용
+```
+
+`KIS_ENV=real` 로 처음 전환할 때 실행. `src/` 외부 편집 차단 + 파괴적
+명령 경고. 한 번의 실수로 큰 손실을 막는 안전망.
