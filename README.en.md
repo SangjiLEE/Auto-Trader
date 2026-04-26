@@ -129,16 +129,38 @@ Thanks to this harness, **5 large strategy redesigns** (slow → fast → v3 →
 
 ## Key results
 
-### System validation (backtest)
+> **⚠️ Day 9 (2026-04-26) full re-measurement.** Six critical bugs found by an
+> independent Codex review have been fixed, and academically validated new strategies
+> have been benchmarked. Results differ significantly from before.
+> Details: [docs/BACKTESTS.md](docs/BACKTESTS.md) (Korean only).
 
-| Strategy | Symbol / universe | Period | Cumulative | Sharpe | MDD | vs BH |
-|----------|------------------|--------|-----------|--------|-----|------|
-| DM | 4 assets | 5.7y | +225% | **1.10** | -22.6% | -10pp (≈ tied) |
-| v3 | NVDA | 5y | +64% | 0.67 | -17% | half the MDD of BH |
-| v3 | TSLA | 5y | +55% | 0.68 | -18% | -30pp (close behind) |
-| **v4** (v3+F&G) | **069500** | 10y | **+29%** | – | -19% | v3 **+9.7pp** |
+### 🥇 Path C comparison — VAA (Keller-Keuning 2017) wins on every metric
 
-**MDD cut by more than half vs. BH** — that's the real value of the system.
+| Strategy | Period | CAGR | Sharpe | MDD | Calmar | Underwater |
+|----------|--------|------|--------|-----|--------|----------|
+| **VAA** (4-asset) | 5.7y | **+23.97%** | **1.54** | **-17.79%** | **1.35** | 819 days |
+| DM (currently live) | 5.7y | +23.77% | 1.10 | -22.85% | 1.04 | 741 days |
+| BH equal-weight | 5.7y | +18.14% | 1.24 | -21.00% | 0.86 | 708 days |
+| **VAA** (3-asset) | 10y | **+20.06%** | **1.29** | **-21.46%** | 0.93 | **428 days** |
+| DM (currently live) | 10y | +16.85% | 0.86 | -26.87% | 0.63 | 762 days |
+
+→ **VAA beats DM on every single metric.** The headline Day-9 finding.
+
+### v3 / v4 reality check
+
+The previous BACKTESTS.md "v4 069500 +28.85%" was an artifact of look-ahead bias and
+P&L accounting errors. After Day-9 fixes:
+
+| Strategy | Symbol | Period | Cumulative | Sharpe |
+|----------|--------|--------|-----------|--------|
+| v3 | 069500 | 10y | +7.96% | 0.15 |
+| v3 | **005930** | 10y | **-14.89%** | -0.12 |
+| v3 | NVDA | 5y | +28.95% | 0.37 |
+| v4 | 069500 | 10y | -2.92% | -0.01 |
+| v4 | NVDA | 5y | +47.98% | 0.50 |
+
+**Bottom line**: v4's real value is in NVDA alone (+19pp over v3). VAA outperforms
+both v3 and v4 across the board, even without NVDA.
 
 ### Live operation (currently running)
 

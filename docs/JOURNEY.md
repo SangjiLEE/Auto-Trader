@@ -250,8 +250,86 @@
 
 ---
 
+## Day 9 (4/26, 일) — Codex 독립 리뷰 + 정직한 재측정 + Path C 발견
+
+**시작점**: "내가 만든 자동매매 로직 리뷰해줘. 책 / 헷지펀드 참조해서 개선점 제안해줘."
+
+### 진행 흐름
+
+1. **Claude 1차 리뷰** — Walk-forward / 비용 모델 / Calmar 등 8개 개선 제안
+2. **Codex 독립 리뷰** — 같은 코드 다른 모델에게 검토 의뢰
+3. **Codex 가 발견한 6개 critical bugs** (Claude 가 모두 놓침):
+   - B1: DM 월말 신호 — incomplete current month bucket 사용
+   - B2: live fill capture 없음 — 주문 수락 = 체결 가정
+   - B3: MAX_POSITIONS 카운팅 — 부분익절 잘못 처리
+   - B4: trailing_active 영속화 안 됨
+   - B5: 백테스트-라이브 timing mismatch (D close vs D+1 open)
+   - B6: F&G look-ahead + v4 P&L 회계 오류
+
+### B6 충격적 발견
+
+```
+BACKTESTS.md 보고: v4 069500 +28.85% (v3 대비 +9.7%p 우수)
+B6 fix 후 측정:    v4 069500  -0.02% (사실상 break-even)
+                  → 28%p 차이는 데이터 leakage 환상
+```
+
+Day 8 의 핵심 자랑이 사실은 코드 버그였음.
+
+### Phase 0 + Phase 1 적용
+
+6개 critical bug fix + 새 메트릭 (Calmar, DD duration, Ulcer) + KR/US 분리 비용 모델 도입.
+모든 백테스트 재측정. 대부분 v3 종목이 이전 대비 절반 이하. 005930 은 양수 → -14.89% 로 전환.
+
+### Path C — 학술 검증 신규 전략 비교
+
+기존 결과가 무너진 상황에서 묻기: "그럼 진짜 무엇이 작동하나?"
+
+3개 TAA 비교:
+1. **DM** (Antonacci 2014, 현재 운영)
+2. **Faber TAA** (Mebane Faber 2007, 10MA)
+3. **VAA** (Keller-Keuning 2017, 13612U + 카나리)
+
+### 🔥 결과: VAA 가 모든 메트릭에서 1위
+
+```
+4-asset 5.7년:
+  VAA:    Sharpe 1.54 | Calmar 1.35 | MDD -17.79%
+  DM:     Sharpe 1.10 | Calmar 1.04 | MDD -22.85%
+  BH eq:  Sharpe 1.24 | Calmar 0.86 | MDD -21.00%
+
+3-asset 10년:
+  VAA:    Sharpe 1.29 | Calmar 0.93 | MDD -21.46%
+  DM:     Sharpe 0.86 | Calmar 0.63 | MDD -26.87%
+```
+
+**현재 운영 DM 이 BH equal-weight 보다도 약함**.
+
+### Day 9 교훈
+
+1. **다른 모델의 독립 리뷰가 본인 모델보다 정확하게 버그 발견**
+2. **데이터 leakage / 회계 오류는 자기 코드에선 거의 안 보임** — 외부 시각 필수
+3. **백테스트 timing align + 실측 비용 + 정확 회계 없으면 결과는 환상**
+4. **학술 검증된 단순 전략 (VAA) 이 자가 설계 복잡 전략 (v3/v4) 압도**
+5. **"잘못된 결과로 자랑하던 것" 을 정직하게 인정하는 게 진짜 다음 진보**
+
+### 산출물
+
+- 12+ commit (B1-B6 + Phase 1 + Path C)
+- 신규 모듈: `cost_model.py`, `metrics.py`, `strategy_faber.py`, `strategy_vaa.py`,
+  `backtest_tactical.py`
+- 재측정된 BACKTESTS.md
+- VAA 메인 도입 계획
+
+---
+
 ## 앞으로
 
 5/4 첫 본격 자동 사이클 → 5월 한 달 데이터 축적 → 6월 초 분석 → 6~9월 검증 → 10월~ 실거래 전환 검토.
+
+**Day 9 결과 반영하여 운영 시스템 재설계 검토 중**:
+- VAA 메인 도입 (또는 VAA + DM 앙상블)
+- v3 / v4 폐기 (NVDA v4 만 옵션 보존)
+- launchd 작업 5개 → 2-3개로 단순화
 
 자세한 계획: [README.md](../README.md#앞으로의-계획) 참고.
