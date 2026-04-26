@@ -360,7 +360,24 @@ def main() -> int:
                 fg_targeted.add(sym)
 
     print("\n[진입 체크]")
-    projected = len(positions) - sum(1 for a in actions if a["action"] == "SELL")
+
+    # [B3 fix] MAX_POSITIONS 정확 카운팅:
+    # - 부분익절 / F&G 분할매도 / DCA 매수 등은 포지션 수 변화 X
+    # - 전량 청산 (qty >= position.qty) 만 -1
+    # - 새 종목 BUY 만 +1
+    def _count_projected_positions(positions, actions):
+        count = len(positions)
+        for a in actions:
+            sym = a["symbol"]
+            if a["action"] == "SELL":
+                if sym in positions and a["qty"] >= positions[sym].qty:
+                    count -= 1
+            elif a["action"] == "BUY":
+                if sym not in positions:
+                    count += 1
+        return count
+
+    projected = _count_projected_positions(positions, actions)
 
     for sym in SWING_UNIVERSE:
         if sym in positions:
