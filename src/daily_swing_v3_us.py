@@ -31,12 +31,12 @@ from . import notify
 from . import place_overseas_order
 from . import swing_strategy_v3 as v3
 
-# [Day 9 옵션 C] NVDA 단독 운영
-# - Day 9 백테스트: NVDA v4 가 v3 대비 +19.03%p (유일한 효과 종목)
-# - AAPL / TSLA 는 v3 / v4 모두 BH 한참 못 이김 → 폐기
-# - VAA (KR 메인) + NVDA v4 (US 알파) 분리 시스템
+# [Day 9 옵션 C + Path A] NVDA + Faber Multi-Asset US 분리 시스템
+# - NVDA v4: US 자본의 5% (단일 종목 알파)
+# - Faber Multi-Asset: US 자본의 15% (7-asset 분산)
+# - 합산: US 슬리브 = US 자본의 20% (백테스트 30/70 비율 = NVDA 5% / Faber 15%)
 SWING_UNIVERSE = ["NVDA"]
-SWING_ALLOCATION = 0.15      # US 슬리브 = USD 자본의 15%
+SWING_ALLOCATION = 0.05      # NVDA 단독 = 총 자본의 5% (Path A 30/70 비중)
 MAX_POSITIONS = 1            # NVDA 단독
 STRATEGY_TAG = "swing_v3"
 USD_KRW_ESTIMATE = 1400

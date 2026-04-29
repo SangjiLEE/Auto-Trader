@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sangjisair.autotrading.monthly_faber_us</string>
+
+    <!--
+        Faber Multi-Asset US (Mebane Faber 2007, 10MA TAA)
+        매월 1~7일 09:10 KST 자동 실행. monthly_vaa (09:05) 와 5분 간격.
+
+        Path A 운영 시스템:
+          - VAA (KR 메인): 069500/133690/360750/148070
+          - Faber US (이 plist): SPY/QQQ/EFA/EEM/AGG/IEF/TIP
+          - NVDA v4 (daily_swing_v3_us): NVDA 단독, 평일 23:50
+
+        백테스트 결과 (5년):
+          Path A (NVDA 30 + Faber 70): Sharpe 0.72, MDD -19.4%, Calmar 0.37
+          분산 효과: NVDA vs Faber 상관 0.221 (매우 낮음)
+    -->
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd "$HOME/projects/auto-trading-bot" &amp;&amp; "$HOME/projects/auto-trading-bot/.venv/bin/python" -m src.monthly_faber_us --refresh --execute --yes</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+        <dict><key>Day</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+        <dict><key>Day</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+        <dict><key>Day</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+        <dict><key>Day</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+        <dict><key>Day</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+        <dict><key>Day</key><integer>7</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/monthly_faber_us.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/monthly_faber_us.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>LANG</key>
+        <string>ko_KR.UTF-8</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot</string>
+</dict>
+</plist>
