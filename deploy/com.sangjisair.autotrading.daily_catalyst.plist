@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sangjisair.autotrading.daily_catalyst</string>
+
+    <!--
+        Catalyst-driven 일간 매매 (Phase B-Lite)
+        평일 23:50 KST 자동 실행 (US 정규장 시작 후 20분).
+
+        Universe: NVDA, TSLA, AAPL, IREN, BMNR (실적 있는 종목)
+        룰: 실적 발표 ±1/2일 catalyst window 진입 → 매수
+            +3% 익절 / -3% 손절 / 2일 max 청산
+        자본: US 자본의 5%
+
+        Phase D 백테스트 결과: 종합 EV +0.187% (양수), Win rate 62.1%
+        다른 strategy (swing_v3) 의 포지션은 건드리지 않음 (entry_info 체크)
+    -->
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd "$HOME/projects/auto-trading-bot" &amp;&amp; "$HOME/projects/auto-trading-bot/.venv/bin/python" -m src.daily_catalyst --refresh --execute --yes</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/daily_catalyst.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/daily_catalyst.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>LANG</key>
+        <string>ko_KR.UTF-8</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot</string>
+</dict>
+</plist>
