@@ -119,7 +119,10 @@ def compute_plan(
     positions: dict[str, int],
     total_equity: int,
     prices: dict[str, int],
-    allocation: float = 1.0,  # VAA 는 100% 단일 자산 (winner-take-all)
+    allocation: float = 0.5,  # [2026-04-30 변경] KR 자본 50% (US 슬리브용 50% 확보)
+                               # 이전: 1.0 (VAA winner-take-all). 변경 사유:
+                               # US Catalyst 비중 5% → 25% 증액으로 자본 분배 재설계
+                               # KR 50 + US (NVDA 5 + Faber 15 + Catalyst 25) = 95% + buffer 5%
 ) -> tuple[list[tuple[str, str, int]], list[str]]:
     """
     현재 포지션 → 타겟 자산으로 변경.
@@ -148,24 +151,30 @@ def compute_plan(
         if sym != target_asset and positions.get(sym, 0) > 0:
             orders.append(("SELL", sym, positions[sym]))
 
-    # 4. 타겟 자산 매수 (예수금 + 매도 예상 수익으로)
+    # 4. 타겟 자산 비중 조정 (allocation 대비 over/under)
     target_price = prices.get(target_asset, 0)
     if target_price <= 0:
         return orders, non_universe + [f"{target_asset} 시세 조회 실패"]
 
-    # 매도 예상 수익 (대략)
-    expected_proceeds = sum(
-        positions[sym] * prices.get(sym, 0)
-        for sym, _, _ in [(s, "S", positions[s]) for s in UNIVERSE_SYMBOLS if s != target_asset and positions.get(s, 0) > 0]
-    )
-
     target_value = total_equity * allocation
     current_target_value = positions.get(target_asset, 0) * target_price
-    additional_buy_value = target_value - current_target_value
-    if additional_buy_value > 0:
-        buy_qty = int(additional_buy_value / target_price)
+    delta_value = target_value - current_target_value
+
+    if delta_value > 0:
+        # under-allocated: 추가 매수
+        buy_qty = int(delta_value / target_price)
         if buy_qty > 0:
             orders.append(("BUY", target_asset, buy_qty))
+    elif delta_value < 0:
+        # [2026-04-30 신규] over-allocated: 일부 매도 (allocation 50% 변경 대응)
+        # 비중 50% 초과 시 초과분 매도 → US 슬리브용 자본 free
+        sell_qty = int((-delta_value) / target_price)
+        current_qty = positions.get(target_asset, 0)
+        sell_qty = min(sell_qty, current_qty)
+        # 5% 이내 미세 차이는 무시 (반복 매매 방지)
+        threshold_qty = max(int(current_qty * 0.05), 1)
+        if sell_qty > threshold_qty:
+            orders.append(("SELL", target_asset, sell_qty))
 
     return orders, non_universe
 

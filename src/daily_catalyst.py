@@ -60,8 +60,10 @@ PROFIT_PCT = 0.03    # +3% 익절
 STOP_PCT = -0.03     # -3% 손절
 MAX_HOLDING_DAYS = 2
 
-# 자본 비중
-ALLOCATION = 0.05    # US 자본의 5%
+# 자본 비중 (사용자 결정 — 25% 로 증액, 2026-04-30)
+# 이전: 5% (실험적 도입)
+# 신규: 25% (Phase D 백테스트 EV +0.187% 확인 후 비중 ↑)
+ALLOCATION = 0.25    # KR 잔고 기준 25% (USD 환산 후 catalyst 슬리브)
 USD_KRW_ESTIMATE = 1410
 ORDER_PRICE_BUFFER = 0.005
 
