@@ -28,13 +28,15 @@
 
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
-        <dict><key>Day</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
-        <dict><key>Day</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
-        <dict><key>Day</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
-        <dict><key>Day</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
-        <dict><key>Day</key><integer>6</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
-        <dict><key>Day</key><integer>7</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+        <!-- US 정규장 시간 (KST 23:30~06:00 DST / 22:30~05:00 표준시).
+             daily_swing_v3_us (23:50) 와 동일한 시간대로 통일. -->
+        <dict><key>Day</key><integer>1</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Day</key><integer>2</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Day</key><integer>3</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Day</key><integer>4</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Day</key><integer>5</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Day</key><integer>6</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+        <dict><key>Day</key><integer>7</integer><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
     </array>
 
     <key>StandardOutPath</key>
