@@ -26,6 +26,7 @@ from . import check_overseas_balance
 from . import config
 from . import db
 from . import kis_auth
+from . import labels
 from . import notify
 
 INITIAL_CAPITAL = 50_000_000
@@ -126,11 +127,11 @@ def fetch_current_eval(token: str) -> dict:
 def format_report(days: int, trades: list[dict], strategy_stats: dict, eval_data: dict) -> str:
     today = datetime.now()
     lines = [
-        f"📊 주간 리포트 — {today.strftime('%Y-%m-%d (%a) %H:%M KST')}",
+        f"📊 주간 종합 리포트 — {today.strftime('%Y-%m-%d (%a) %H:%M KST')}",
         f"환경: {'모의' if config.KIS_ENV == 'paper' else '실거래'}",
         f"기간: 최근 {days}일",
         "",
-        "[자본 현황]",
+        "[💰 자본 현황]",
     ]
 
     kr_total = eval_data["kr_total_krw"]
@@ -147,7 +148,7 @@ def format_report(days: int, trades: list[dict], strategy_stats: dict, eval_data
     lines.append("")
 
     # Strategy 별
-    lines.append(f"[Strategy 별 ({days}일 거래)]")
+    lines.append(f"[📊 전략별 ({days}일 거래)]")
     if not strategy_stats:
         lines.append("  거래 없음")
     else:
@@ -155,8 +156,12 @@ def format_report(days: int, trades: list[dict], strategy_stats: dict, eval_data
             realized = s["realized_pnl"]
             currency = "$" if any(sy in ["NVDA","TSLA","AAPL","SPY","QQQ","EFA","EEM","AGG","IEF","TIP","META","AMZN","GOOGL","MSFT","TSM","COIN","SOXL","TSLL","IREN","BMNR","ORCL","LQD","SHY","BIL"] for sy in s["symbols"]) else "₩"
             sign = "+" if realized >= 0 else ""
+            kr_name = labels.strategy_kr(strat)
             lines.append(
-                f"  {strat:<14} 매수 {s['n_buys']} / 매도 {s['n_sells']} | "
+                f"  {kr_name}"
+            )
+            lines.append(
+                f"    매수 {s['n_buys']} / 매도 {s['n_sells']} | "
                 f"실현 {sign}{realized:.2f}{currency} | {','.join(s['symbols'][:3])}"
             )
 

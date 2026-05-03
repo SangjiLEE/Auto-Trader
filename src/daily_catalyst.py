@@ -327,7 +327,7 @@ def _send_report(actions, holdings, calendar, results=None):
     mode = "모의" if config.KIS_ENV == "paper" else "실"
     today = date.today()
     lines = [
-        f"🎯 Catalyst Daily [{mode}]",
+        f"🎯 호재 단타 (Catalyst) — 일간 [{mode}]",
         f"날짜: {today.isoformat()}",
         "",
     ]

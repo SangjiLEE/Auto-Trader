@@ -412,7 +412,7 @@ def _send_report(swing_budget_usd, positions, scan_results, actions, results=Non
     else:
         lines.append("거래 없음 (조건 미충족)")
 
-    notify.send(f"<b>🎯 v3 US — {today}</b>\n\n" + "\n".join(lines))
+    notify.send(f"<b>🎯 체제 적응 스윙 (v3 US) — {today}</b>\n\n" + "\n".join(lines))
 
 
 def _to_int(v):
