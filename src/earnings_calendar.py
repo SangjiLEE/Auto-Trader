@@ -27,8 +27,17 @@ from pathlib import Path
 _CACHE_FILE = Path(__file__).parent.parent / ".earnings_cache.json"
 
 
-# Phase D 백테스트에서 양수 EV 확인된 universe (ORCL 제외)
-DEFAULT_UNIVERSE = ["NVDA", "TSLA", "AAPL", "SOXL", "TSLL", "IREN", "BMNR"]
+# [#2 개선] universe 확장 — 거래 빈도 ↑ + 자본 활용 ↑
+# 기존 5종목: NVDA, TSLA, AAPL, IREN, BMNR (catalyst window 1-2주마다 1개만 활성)
+# 추가 6종목: META, AMZN, GOOGL, MSFT, TSM, COIN (Big Tech + 반도체 + 암호화폐)
+# Total 11종목 → catalyst window 항상 1-2개 활성 예상
+# (SOXL/TSLL ETF 는 자체 실적 없음 → 제외)
+DEFAULT_UNIVERSE = [
+    "NVDA", "TSLA", "AAPL",                      # 기존
+    "IREN", "BMNR",                              # BTC 마이너 (Phase D 양수 EV)
+    "META", "AMZN", "GOOGL", "MSFT", "TSM",      # Big Tech + TSMC
+    "COIN",                                      # Coinbase (BTC 변동성)
+]
 
 
 def _load_cache() -> dict | None:

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sangjisair.autotrading.weekly_report</string>
+
+    <!--
+        주간 리포트 (Weekly Report)
+        매주 일요일 21:00 KST 자동 실행.
+        7일 거래 분석 + 누적 손익 + Strategy 별 실현 손익 + 현재 보유.
+        Telegram 알림 + logs/weekly_report.log
+    -->
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd "$HOME/projects/auto-trading-bot" &amp;&amp; "$HOME/projects/auto-trading-bot/.venv/bin/python" -m src.weekly_report</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/weekly_report.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot/logs/weekly_report.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>LANG</key>
+        <string>ko_KR.UTF-8</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sangjisair/projects/auto-trading-bot</string>
+</dict>
+</plist>

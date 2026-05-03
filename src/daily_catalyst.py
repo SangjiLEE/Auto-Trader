@@ -49,21 +49,32 @@ from . import kis_auth
 from . import notify
 from . import place_overseas_order
 
-UNIVERSE = ["NVDA", "TSLA", "AAPL", "IREN", "BMNR"]
+# [#2 개선] universe 확장 (5 → 11종목, 거래 빈도 ↑)
+UNIVERSE = [
+    "NVDA", "TSLA", "AAPL",
+    "IREN", "BMNR",                              # BTC 마이너
+    "META", "AMZN", "GOOGL", "MSFT", "TSM",      # Big Tech
+    "COIN",                                      # 암호화폐
+]
 
 # Catalyst window: 실적 발표 ±N일
 CATALYST_DAYS_BEFORE = 1
 CATALYST_DAYS_AFTER = 2
 
-# 매매 룰
-PROFIT_PCT = 0.03    # +3% 익절
-STOP_PCT = -0.03     # -3% 손절
+# [#3 개선] 동적 익절 (trailing stop) — 사용자 원래 룰 복원
+# 이전: +3% 즉시 익절 (단순화)
+# 신규: +3% 도달 → trailing 활성 → peak -1% 또는 +10% 도달 시 청산
+PROFIT_TRIGGER = 0.03    # +3% 도달 시 trailing 활성화
+TRAIL_DRAWDOWN = 0.01    # peak 부터 -1% drawdown 시 청산
+PROFIT_CAP = 0.10        # +10% 도달 시 무조건 청산 (수익 확보)
+STOP_PCT = -0.03         # -3% 손절 (trailing 비활성 상태)
 MAX_HOLDING_DAYS = 2
 
-# 자본 비중 (사용자 결정 — 25% 로 증액, 2026-04-30)
-# 이전: 5% (실험적 도입)
-# 신규: 25% (Phase D 백테스트 EV +0.187% 확인 후 비중 ↑)
-ALLOCATION = 0.25    # KR 잔고 기준 25% (USD 환산 후 catalyst 슬리브)
+# [#7 개선] 재진입 쿨다운
+REENTRY_COOLDOWN_DAYS = 5
+
+# 자본 비중
+ALLOCATION = 0.25
 USD_KRW_ESTIMATE = 1410
 ORDER_PRICE_BUFFER = 0.005
 
@@ -103,11 +114,13 @@ def fetch_us_prices(token: str, symbols: list[str]) -> dict[str, float]:
     return prices
 
 
-def fetch_catalyst_entry(symbol: str) -> tuple[date, float] | None:
-    """trades 테이블에서 catalyst 전략의 마지막 매수 (entry) 조회.
+def fetch_catalyst_entry(symbol: str) -> dict | None:
+    """[#6 개선] catalyst 자기 매수의 net 보유 정보.
 
-    반환: (entry_date, entry_price) 또는 None.
-    매도 후 다시 매수면 가장 최신 매수 사이클의 시작점.
+    반환: {entry_date, avg_price, qty, peak_price} 또는 None.
+    - 다른 strategy (swing_v3) 의 NVDA 보유와 분리
+    - 청산 매도 수량 = 자기 net qty (KIS 잔고 합산 평단 무관)
+    - peak_price = 매수 후 최고 가격 (trailing 계산용, position_states 에서 별도 추적)
     """
     with db.connection() as conn:
         rows = conn.execute(
@@ -121,31 +134,124 @@ def fetch_catalyst_entry(symbol: str) -> tuple[date, float] | None:
         ).fetchall()
     if not rows:
         return None
-    # 마지막 매도 이후 첫 매수 찾기
-    cycle_buy_date = None
-    cycle_buy_price = None
+
     cycle_qty = 0
+    cycle_total_buy_value = 0.0
+    cycle_total_buy_qty = 0
+    cycle_buy_date = None
+
     for r in rows:
         qty = int(r["quantity"])
         if r["side"] == "buy":
             if cycle_qty == 0:
-                # 새 사이클 시작
                 cycle_buy_date = r["executed_at"]
-                cycle_buy_price = float(r["price"])
+                cycle_total_buy_value = 0.0
+                cycle_total_buy_qty = 0
             cycle_qty += qty
+            cycle_total_buy_qty += qty
+            cycle_total_buy_value += qty * float(r["price"])
         else:
             cycle_qty -= qty
             if cycle_qty <= 0:
-                cycle_buy_date = None
-                cycle_buy_price = None
                 cycle_qty = 0
-    if cycle_buy_date is None:
+                cycle_total_buy_qty = 0
+                cycle_total_buy_value = 0.0
+                cycle_buy_date = None
+
+    if cycle_qty <= 0 or cycle_buy_date is None:
         return None
+
+    avg_price = (
+        cycle_total_buy_value / cycle_total_buy_qty
+        if cycle_total_buy_qty > 0 else 0
+    )
     try:
         d = date.fromisoformat(cycle_buy_date.split("T")[0].split(" ")[0])
-        return d, cycle_buy_price
     except (ValueError, AttributeError):
         return None
+
+    return {
+        "entry_date": d,
+        "avg_price": avg_price,
+        "qty": cycle_qty,
+    }
+
+
+def fetch_last_sell_date(symbol: str) -> date | None:
+    """[#7 개선] 재진입 쿨다운 — catalyst 마지막 매도일."""
+    with db.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT executed_at FROM trades
+            WHERE strategy = ? AND env = ? AND symbol = ? AND side = 'sell'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (STRATEGY_TAG, config.KIS_ENV, symbol),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        return date.fromisoformat(row["executed_at"].split("T")[0].split(" ")[0])
+    except (ValueError, AttributeError):
+        return None
+
+
+def can_reenter(symbol: str, today: date | None = None) -> bool:
+    """[#7 개선] 재진입 가능 여부 — 마지막 매도 후 N거래일 경과."""
+    if today is None:
+        today = date.today()
+    last = fetch_last_sell_date(symbol)
+    if last is None:
+        return True
+    return (today - last).days >= REENTRY_COOLDOWN_DAYS
+
+
+def load_catalyst_state(symbol: str) -> dict:
+    """[#3 개선] position_states 에서 catalyst trailing 상태 로드."""
+    with db.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT trailing_active, peak_price
+            FROM position_states
+            WHERE symbol = ? AND strategy = ? AND env = ?
+            """,
+            (symbol, STRATEGY_TAG, config.KIS_ENV),
+        ).fetchone()
+    if row is None:
+        return {"trailing_active": False, "peak_price": 0.0}
+    return {
+        "trailing_active": bool(row["trailing_active"]),
+        "peak_price": float(row["peak_price"] or 0),
+    }
+
+
+def save_catalyst_state(symbol: str, trailing_active: bool, peak_price: float) -> None:
+    """[#3 개선] catalyst trailing 상태 영속화."""
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO position_states
+                (symbol, strategy, env, trailing_active, peak_price,
+                 pf_t1_done, pf_t2_done, dca_done, entry_regime, updated_at)
+            VALUES (?, ?, ?, ?, ?, 0, 0, 0, 'CATALYST', datetime('now'))
+            """,
+            (
+                symbol, STRATEGY_TAG, config.KIS_ENV,
+                int(trailing_active), float(peak_price),
+            ),
+        )
+
+
+def clear_catalyst_state(symbol: str) -> None:
+    """[#3 개선] 청산 시 state 삭제."""
+    with db.connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM position_states
+            WHERE symbol = ? AND strategy = ? AND env = ?
+            """,
+            (symbol, STRATEGY_TAG, config.KIS_ENV),
+        )
 
 
 def log_trade(symbol, side, qty, price_usd, order_id, msg):
@@ -302,10 +408,27 @@ def main() -> int:
     sleeve_usd = (total_krw * ALLOCATION) / USD_KRW_ESTIMATE
     print(f"  US 슬리브 자본: ${sleeve_usd:,.2f} (총 {total_krw:,}원의 {ALLOCATION*100:.0f}%)")
 
-    holdings = fetch_us_holdings(token)
-    print(f"  현재 catalyst 포지션: {len(holdings)}개")
-    for sym, h in holdings.items():
-        print(f"    {sym}: {h['qty']}주 @ ${h['avg_price_usd']:.2f} (현재 ${h['current_price_usd']:.2f})")
+    raw_holdings = fetch_us_holdings(token)
+
+    # [#6 개선] catalyst 자기 매수만 보유로 인식 (다른 strategy 충돌 방지)
+    catalyst_holdings = {}
+    for sym, h in raw_holdings.items():
+        entry_info = fetch_catalyst_entry(sym)
+        if entry_info is not None:
+            catalyst_holdings[sym] = {
+                **h,
+                "catalyst_qty": entry_info["qty"],
+                "catalyst_avg": entry_info["avg_price"],
+                "catalyst_entry_date": entry_info["entry_date"],
+            }
+
+    print(f"  현재 catalyst 포지션: {len(catalyst_holdings)}개 (자기 매수만)")
+    for sym, h in catalyst_holdings.items():
+        print(f"    {sym}: catalyst {h['catalyst_qty']}주 @ ${h['catalyst_avg']:.2f} "
+              f"(KIS 잔고 합산 {h['qty']}주 / 평단 ${h['avg_price_usd']:.2f})")
+    if len(raw_holdings) > len(catalyst_holdings):
+        other_syms = [s for s in raw_holdings if s not in catalyst_holdings]
+        print(f"  다른 strategy 보유 (catalyst 무관): {', '.join(other_syms)}")
 
     # 3. Catalyst window 활성 종목
     print(f"\n[3] Catalyst window (실적 발표 ±{CATALYST_DAYS_BEFORE}/{CATALYST_DAYS_AFTER}일)...")
@@ -325,50 +448,90 @@ def main() -> int:
             active_syms.append(sym)
 
     # 4. 가격 조회
-    syms_to_price = list(set(active_syms + list(holdings.keys())))
+    syms_to_price = list(set(active_syms + list(catalyst_holdings.keys())))
     prices = fetch_us_prices(token, syms_to_price) if syms_to_price else {}
 
     actions = []
 
-    # 5. 청산 룰 (보유 종목)
-    print("\n[4] 청산 평가...")
-    for sym, h in holdings.items():
+    # 5. [#3 개선] 청산 룰 (trailing stop + +10% cap + -3% 손절 + 2일 max)
+    print("\n[4] 청산 평가 (동적 익절 룰)...")
+    for sym, h in catalyst_holdings.items():
         current = prices.get(sym, h.get("current_price_usd", 0))
-        avg = h.get("avg_price_usd", 0)
+        avg = h["catalyst_avg"]
+        catalyst_qty = h["catalyst_qty"]
+        entry_d = h["catalyst_entry_date"]
         if avg <= 0 or current <= 0:
             continue
         pnl_pct = (current - avg) / avg
+        days_held = (today - entry_d).days
 
-        # entry_date 조회 → catalyst 가 매수한 포지션인지 확인
-        entry_info = fetch_catalyst_entry(sym)
-        if entry_info is None:
-            # 다른 strategy (예: swing_v3) 의 포지션 → catalyst 가 건드리지 않음
-            print(f"  {sym}: 다른 strategy 포지션 (catalyst 매수 X) → 청산 스킵")
-            continue
-        entry_date, _ = entry_info
-        days_held = (today - entry_date).days
+        # [#3] trailing 상태 로드
+        state = load_catalyst_state(sym)
+        trailing_active = state["trailing_active"]
+        peak = max(state["peak_price"], current, avg)
+
+        # [#3] +3% 도달 시 trailing 활성
+        if not trailing_active and pnl_pct >= PROFIT_TRIGGER:
+            trailing_active = True
+            print(f"  {sym}: 🎯 trailing 활성 (+{pnl_pct*100:.2f}%)")
+
+        # peak 갱신
+        if current > peak:
+            peak = current
+
+        # 영속화 (현 상태)
+        save_catalyst_state(sym, trailing_active, peak)
 
         reason = None
-        if pnl_pct >= PROFIT_PCT:
-            reason = f"+{pnl_pct*100:.2f}% 익절"
-        elif pnl_pct <= STOP_PCT:
+        # +10% cap (수익 확보)
+        if pnl_pct >= PROFIT_CAP:
+            reason = f"+{pnl_pct*100:.2f}% 최대 익절 (cap)"
+        # trailing 발동 (peak 부터 -1% drawdown)
+        elif trailing_active:
+            trail_threshold = peak * (1 - TRAIL_DRAWDOWN)
+            if current <= trail_threshold:
+                peak_pct = (peak - avg) / avg * 100
+                reason = (
+                    f"trailing 청산 (peak +{peak_pct:.2f}% → 현재 +{pnl_pct*100:.2f}%, "
+                    f"drawdown -{TRAIL_DRAWDOWN*100:.0f}%)"
+                )
+        # -3% 손절 (trailing 비활성 상태에서만)
+        if reason is None and not trailing_active and pnl_pct <= STOP_PCT:
             reason = f"{pnl_pct*100:.2f}% 손절"
-        elif days_held >= MAX_HOLDING_DAYS:
+        # 2일 max 시간만료
+        if reason is None and days_held >= MAX_HOLDING_DAYS:
             reason = f"{days_held}일 max 보유 시간만료 ({pnl_pct*100:+.2f}%)"
 
         if reason:
             actions.append({
-                "side": "SELL", "symbol": sym, "qty": h["qty"], "reason": reason,
+                "side": "SELL", "symbol": sym, "qty": catalyst_qty,
+                "reason": reason,
             })
-            print(f"  {sym}: SELL {h['qty']}주 — {reason}")
+            print(f"  {sym}: SELL {catalyst_qty}주 — {reason}")
         else:
-            print(f"  {sym}: 유지 ({pnl_pct*100:+.2f}%, {days_held}일 보유)")
+            trail_flag = "🎯 trailing" if trailing_active else "일반"
+            print(f"  {sym}: 유지 ({pnl_pct*100:+.2f}%, peak +{(peak-avg)/avg*100:.2f}%, "
+                  f"{days_held}일, {trail_flag})")
 
-    # 6. 매수 룰 (catalyst active + 미보유)
-    print("\n[5] 매수 평가...")
-    new_buys = [s for s in active_syms if s not in holdings]
+    # 6. [#7 개선] 매수 룰 — 쿨다운 + entry-aware
+    print(f"\n[5] 매수 평가 (재진입 쿨다운 {REENTRY_COOLDOWN_DAYS}거래일)...")
+    new_buys = []
+    for sym in active_syms:
+        # catalyst 가 이미 보유 중이면 skip
+        if sym in catalyst_holdings:
+            print(f"  {sym}: catalyst 이미 보유 → skip")
+            continue
+        # 재진입 쿨다운 체크
+        if not can_reenter(sym, today):
+            last_sell = fetch_last_sell_date(sym)
+            days_since = (today - last_sell).days if last_sell else 0
+            print(f"  {sym}: 쿨다운 중 (마지막 매도 {days_since}일 전, "
+                  f"{REENTRY_COOLDOWN_DAYS}일 필요)")
+            continue
+        new_buys.append(sym)
+
     if new_buys and prices:
-        capital_per_pos = sleeve_usd / len(new_buys)  # 동일 weight
+        capital_per_pos = sleeve_usd / len(new_buys)
         for sym in new_buys:
             price = prices.get(sym, 0)
             if price <= 0:
@@ -382,13 +545,15 @@ def main() -> int:
                 "reason": f"catalyst window 진입 (~${qty*price:.2f})",
             })
             print(f"  {sym}: BUY {qty}주 @ ~${price:.2f} = ~${qty*price:.2f}")
+    elif not active_syms:
+        print("  catalyst window 활성 종목 없음")
     else:
-        print("  catalyst window 활성 + 미보유 종목 없음")
+        print("  매수 가능 종목 없음 (모두 보유 중 또는 쿨다운)")
 
     # 7. 실행
     if not actions:
         print("\n변경 없음.")
-        _send_report(actions, holdings, calendar)
+        _send_report(actions, catalyst_holdings, calendar)
         return 0
 
     print(f"\n총 {len(actions)}개 액션:")
@@ -397,7 +562,7 @@ def main() -> int:
 
     if not args.execute:
         print("\n※ DRY RUN")
-        _send_report(actions, holdings, calendar)
+        _send_report(actions, catalyst_holdings, calendar)
         return 0
 
     if not args.yes and not confirm_execution():
@@ -426,6 +591,11 @@ def main() -> int:
                 print(f"  {'⚠️' if status == 'PARTIAL' else '✅'} {status} {filled}/{qty}주 @ ${price:.2f} ({odno})")
                 log_trade(sym, side_lower, filled, price, odno,
                           f"catalyst {status} | {a['reason']} | {msg}")
+                # [#3 개선] 매수 후 state init / 매도 후 state clear
+                if side_lower == "buy" and filled > 0:
+                    save_catalyst_state(sym, False, price)  # trailing 비활성, peak=매수가
+                elif side_lower == "sell" and filled >= qty:
+                    clear_catalyst_state(sym)  # 청산 → state 삭제
                 results.append({**a, "status": "OK", "filled_qty": filled,
                                 "fill_status": status, "price": price})
         except (kis_api.KISAPIError, RuntimeError) as e:
@@ -436,7 +606,7 @@ def main() -> int:
 
     ok = sum(1 for r in results if r["status"] == "OK")
     print(f"\n완료: 성공 {ok} / 실패 {len(results)-ok}")
-    _send_report(actions, holdings, calendar, results)
+    _send_report(actions, catalyst_holdings, calendar, results)
     return 0
 
 

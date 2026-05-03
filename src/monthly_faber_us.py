@@ -70,7 +70,9 @@ ASSET_NAMES = {
 ALLOCATION = 0.15           # US 슬리브 = 총 자본의 15%
 USD_KRW_ESTIMATE = 1410     # 단순 환율 가정 (정확 환율은 KIS API 별도)
 STRATEGY_TAG = "faber_us"
-MA_MONTHS = 10              # Faber 표준 10MA
+# [#5 개선] 10MA → 12MA (Faber 본인 후속 추천 + 신호 안정성 ↑)
+# 12MA 가 5.7년 짧은 데이터에서 노이즈 ↓ (이전 4/30 EFA+EEM → 5/1 SPY+QQQ+EFA 빠른 변경 완화)
+MA_MONTHS = 12              # 12MA (이전: 10)
 ORDER_PRICE_BUFFER = 0.005  # 시장가 호가 버퍼 (NVDA v3 와 동일)
 
 
