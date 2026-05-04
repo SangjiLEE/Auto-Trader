@@ -105,19 +105,33 @@ def compute_realized_pnl_per_strategy(days: int) -> dict[str, dict]:
 
 
 def fetch_current_eval(token: str) -> dict:
-    """현재 잔고 평가."""
+    """현재 잔고 평가 + 정확한 P&L 계산.
+
+    [Fix 2026-05-04] 이전: KR + US 평가 단순 합산 - 초기 KR 시드
+                     → US 자산 가치가 통째로 '수익' 으로 inflated
+    신규: 미실현 P&L (KIS 잔고 평단가 기준) + 실현 P&L (DB) 정확 합산
+    """
     kr_data = check_balance.fetch_balance(token)
     kr_output2 = (kr_data.get("output2") or [{}])[0]
     kr_total = int(kr_output2.get("tot_evlu_amt") or 0)
     kr_cash = int(kr_output2.get("dnca_tot_amt") or 0)
 
+    # KR 미실현 P&L (KIS 평단 기준)
+    kr_unrealized = 0
+    for h in (kr_data.get("output1") or []):
+        try:
+            kr_unrealized += float(h.get("evlu_pfls_amt") or 0)
+        except (ValueError, TypeError):
+            pass
+
     us_holdings = check_overseas_balance.fetch_all_us_holdings(token)
     us_eval_usd = sum(h["eval_amount_usd"] for h in us_holdings)
-    us_pnl_usd = sum(h["pnl_usd"] for h in us_holdings)
+    us_pnl_usd = sum(h["pnl_usd"] for h in us_holdings)  # US 미실현
 
     return {
         "kr_total_krw": kr_total,
         "kr_cash_krw": kr_cash,
+        "kr_unrealized_krw": int(kr_unrealized),
         "us_eval_usd": us_eval_usd,
         "us_pnl_usd": us_pnl_usd,
         "us_holdings": us_holdings,
@@ -134,17 +148,37 @@ def format_report(days: int, trades: list[dict], strategy_stats: dict, eval_data
         "[💰 자본 현황]",
     ]
 
+    # [Fix 2026-05-04] 정확한 손익 = 실현 (DB) + 미실현 (KIS 평단 기준)
     kr_total = eval_data["kr_total_krw"]
+    kr_unrealized = eval_data["kr_unrealized_krw"]
     us_eval_krw = int(eval_data["us_eval_usd"] * USD_KRW)
-    total_eval = kr_total + us_eval_krw
-    cumulative_pnl = total_eval - INITIAL_CAPITAL
-    cumulative_pct = cumulative_pnl / INITIAL_CAPITAL * 100
+    us_unrealized_krw = int(eval_data["us_pnl_usd"] * USD_KRW)
+
+    # 실현 손익 (Strategy 별 합산)
+    realized_total_krw = 0
+    for s in strategy_stats.values():
+        realized = s["realized_pnl"]
+        is_kr = any(sy.isdigit() and len(sy) == 6 for sy in s["symbols"])
+        if is_kr:
+            realized_total_krw += int(realized)
+        else:
+            realized_total_krw += int(realized * USD_KRW)
+
+    # 미실현 (KR + US, 환산)
+    unrealized_total_krw = kr_unrealized + us_unrealized_krw
+
+    # 진짜 누적 손익 (실현 + 미실현)
+    true_cumulative = realized_total_krw + unrealized_total_krw
+    cumulative_pct = true_cumulative / INITIAL_CAPITAL * 100
 
     lines.append(f"  KR 평가:    ₩{kr_total:,}")
-    lines.append(f"  US 평가:    ₩{us_eval_krw:,} (${eval_data['us_eval_usd']:.2f})")
-    lines.append(f"  총 평가:    ₩{total_eval:,}")
-    lines.append(f"  초기 자본:  ₩{INITIAL_CAPITAL:,}")
-    lines.append(f"  누적 손익:  ₩{cumulative_pnl:+,} ({cumulative_pct:+.2f}%)")
+    lines.append(f"  US 평가:    ${eval_data['us_eval_usd']:.2f} (≈ ₩{us_eval_krw:,})")
+    lines.append("")
+    lines.append(f"  실현 손익:  ₩{realized_total_krw:+,}")
+    lines.append(f"  미실현:     ₩{unrealized_total_krw:+,}  (KR ₩{kr_unrealized:+,} / US ₩{us_unrealized_krw:+,})")
+    lines.append(f"  ─────────")
+    lines.append(f"  ✨ 총 누적: ₩{true_cumulative:+,} ({cumulative_pct:+.2f}%)")
+    lines.append(f"  (초기 KR 시드 ₩{INITIAL_CAPITAL:,} 대비)")
     lines.append("")
 
     # Strategy 별
