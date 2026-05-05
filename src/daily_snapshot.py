@@ -253,7 +253,7 @@ def _send_evening_report(snap: dict, prev: dict | None) -> None:
             )
 
     msg = f"<b>🌇 장 마감 — {today_str}</b>\n\n" + "\n".join(lines)
-    notify.send(msg)
+    notify.send(msg, channel=notify.CHANNEL_KR_DAILY)
 
 
 def main() -> int:

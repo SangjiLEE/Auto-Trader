@@ -243,7 +243,9 @@ def main() -> int:
     print(report)
 
     if notify.is_enabled():
-        notify.send(report)
+        # 주간 종합은 KR + US 양쪽 weekly 채널 모두 발송
+        notify.send(report, channel=notify.CHANNEL_KR_WEEKLY)
+        notify.send(report, channel=notify.CHANNEL_US_WEEKLY)
 
     return 0
 

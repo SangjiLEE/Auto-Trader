@@ -352,7 +352,7 @@ def _send_report(target, signal_date, positions, total, orders, results=None):
                 f"  {status_emoji} {r['side']} {r['symbol']} "
                 f"{r.get('filled_qty', r.get('qty', '?'))}주 [{fill}]"
             )
-    notify.send("\n".join(lines))
+    notify.send("\n".join(lines), channel=notify.CHANNEL_KR_REALTIME)
 
 
 def main() -> int:

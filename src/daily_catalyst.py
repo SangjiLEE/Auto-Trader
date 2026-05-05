@@ -372,7 +372,7 @@ def _send_report(actions, holdings, calendar, results=None):
             fill = r.get("fill_status", "")
             lines.append(f"  {emoji} {r['side']} {r['symbol']} {r.get('filled_qty', '?')}주 [{fill}]")
 
-    notify.send("\n".join(lines))
+    notify.send("\n".join(lines), channel=notify.CHANNEL_US_REALTIME)
 
 
 def main() -> int:

@@ -142,7 +142,7 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
         lines.append("[미국 보유 포지션] 없음")
 
     msg = f"<b>🇺🇸 미국장 마감 — {today_str}</b>\n\n" + "\n".join(lines)
-    notify.send(msg)
+    notify.send(msg, channel=notify.CHANNEL_US_DAILY)
 
 
 def main() -> int:

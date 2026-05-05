@@ -50,7 +50,38 @@ def _telegram_creds() -> tuple[str, str]:
 
 
 def _slack_webhook() -> str:
+    """기존 fallback default URL. 신규는 channel 별 URL 사용 권장."""
     return os.getenv("SLACK_WEBHOOK_URL") or ""
+
+
+# Channel kind 상수 (모듈 외부 사용)
+CHANNEL_KR_REALTIME = "kr_realtime"
+CHANNEL_KR_DAILY = "kr_daily"
+CHANNEL_KR_WEEKLY = "kr_weekly"
+CHANNEL_US_REALTIME = "us_realtime"
+CHANNEL_US_DAILY = "us_daily"
+CHANNEL_US_WEEKLY = "us_weekly"
+
+# Channel kind → 환경변수 이름
+_CHANNEL_ENV_MAP = {
+    CHANNEL_KR_REALTIME: "SLACK_WEBHOOK_KR_REALTIME",
+    CHANNEL_KR_DAILY: "SLACK_WEBHOOK_KR_DAILY",
+    CHANNEL_KR_WEEKLY: "SLACK_WEBHOOK_KR_WEEKLY",
+    CHANNEL_US_REALTIME: "SLACK_WEBHOOK_US_REALTIME",
+    CHANNEL_US_DAILY: "SLACK_WEBHOOK_US_DAILY",
+    CHANNEL_US_WEEKLY: "SLACK_WEBHOOK_US_WEEKLY",
+}
+
+
+def _slack_webhook_for(channel: str | None) -> str:
+    """channel kind → webhook URL. 없으면 default URL fallback."""
+    if channel:
+        env_name = _CHANNEL_ENV_MAP.get(channel)
+        if env_name:
+            url = os.getenv(env_name)
+            if url:
+                return url
+    return _slack_webhook()
 
 
 def _telegram_enabled() -> bool:
@@ -59,7 +90,10 @@ def _telegram_enabled() -> bool:
 
 
 def _slack_enabled() -> bool:
-    return bool(_slack_webhook())
+    """Slack 활성: default URL 또는 channel 별 URL 중 하나라도 있으면 True."""
+    if _slack_webhook():
+        return True
+    return any(os.getenv(name) for name in _CHANNEL_ENV_MAP.values())
 
 
 def is_enabled() -> bool:
@@ -94,9 +128,9 @@ def _send_telegram(message: str, silent: bool = False) -> bool:
         return False
 
 
-def _send_slack(message: str) -> bool:
-    """Slack Incoming Webhook 으로 전송. HTML 태그 제거."""
-    webhook = _slack_webhook()
+def _send_slack(message: str, channel: str | None = None) -> bool:
+    """Slack Incoming Webhook 으로 전송. channel 별 URL 자동 선택."""
+    webhook = _slack_webhook_for(channel)
     if not webhook:
         return False
     plain = _strip_html(message)
@@ -108,14 +142,15 @@ def _send_slack(message: str) -> bool:
         return False
 
 
-def send(message: str, silent: bool = False) -> bool:
+def send(message: str, channel: str | None = None, silent: bool = False) -> bool:
     """
     멀티 채널 전송.
-    - Slack 활성: Slack 전송
-    - Telegram 활성: Telegram 전송
-    - 둘 다 활성: 병렬 전송, 하나라도 성공하면 True
+    - channel: Slack 채널 kind (CHANNEL_*). None 이면 default webhook
+    - Slack: channel 별 webhook → 없으면 default → 없으면 Telegram fallback
+    - Telegram: 모든 channel 같은 봇 (분리 X)
+    - 하나라도 성공하면 True
     """
-    slack_ok = _send_slack(message) if _slack_enabled() else False
+    slack_ok = _send_slack(message, channel) if _slack_enabled() else False
     telegram_ok = _send_telegram(message, silent) if _telegram_enabled() else False
     return slack_ok or telegram_ok
 
