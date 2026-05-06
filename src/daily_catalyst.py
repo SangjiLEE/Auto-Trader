@@ -341,7 +341,7 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
 
     n_signals = len(actions)
     lines = [
-        f"<실적 모멘텀 (Catalyst) — {today.isoformat()} [{mode}]>",
+        f"【실적 모멘텀 (Catalyst) — {today.isoformat()} [{mode}]】",
         f"　스캔: {len(UNIVERSE)}종목 / 신호 {n_signals}건",
         "",
     ]
@@ -359,7 +359,7 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
     lines.append("◾️보유 catalyst 포지션")
     if holdings:
         for sym, h in holdings.items():
-            lines.append(f"　{sym}: {h['qty']}주 @ ${h['avg_price_usd']:.2f}")
+            lines.append(f"　{sym}: {h['qty']:,}주 @ ${h['avg_price_usd']:,.2f}")
     else:
         lines.append("　없음")
     lines.append("")

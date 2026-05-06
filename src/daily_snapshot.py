@@ -219,7 +219,7 @@ def _send_evening_report(snap: dict, prev: dict | None) -> None:
 
     # 헤더 블록
     lines = [
-        f"<장 마감 — {today_str} [{mode}]>",
+        f"【장 마감 — {today_str} [{mode}]】",
         f"　총평가: {snap['total_value']:,}원",
         f"　누적손익: {snap['pnl_amount']:+,}원",
     ]

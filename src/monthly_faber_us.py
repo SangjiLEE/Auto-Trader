@@ -332,7 +332,7 @@ def _send_report(weights, signal_date, holdings, total_usd, orders, results=None
     active_syms = [s for s, w in weights.items() if w > 0]
 
     lines = [
-        f"<추세 추종 분산 (Faber US) — 월간 [{mode}]>",
+        f"【추세 추종 분산 (Faber US) — 월간 [{mode}]】",
         f"　신호 날짜: {signal_date}",
         f"　활성 자산 ({n_active}/7): {', '.join(active_syms) if active_syms else '없음 (현금)'}",
         f"　US 슬롯: ${total_usd:,.2f}",

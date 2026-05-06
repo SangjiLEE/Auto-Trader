@@ -385,7 +385,7 @@ def _send_report(swing_budget_usd, positions, scan_results, actions, results=Non
     fg_class = fg.get("classification", "?")
 
     lines = [
-        f"<체제 적응 스윙 (v3 US) — {today} [{mode}]>",
+        f"【체제 적응 스윙 (v3 US) — {today} [{mode}]】",
         f"　v3 US 슬롯: ${swing_budget_usd:,.2f}",
         f"　공포·탐욕: {fg_value} ({fg_class})",
         "",
@@ -395,7 +395,7 @@ def _send_report(swing_budget_usd, positions, scan_results, actions, results=Non
     lines.append("◾️v3 US 포지션")
     if positions:
         for sym, pos in positions.items():
-            lines.append(f"　{sym}({pos.entry_regime}): {pos.qty}주 @ ${pos.avg_price:.2f}")
+            lines.append(f"　{sym}({pos.entry_regime}): {pos.qty:,}주 @ ${pos.avg_price:,.2f}")
     else:
         lines.append("　없음")
     lines.append("")

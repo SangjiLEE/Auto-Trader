@@ -118,7 +118,7 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
 
     # 헤더 블록
     lines = [
-        f"<미국장 마감 — {today_str} [{mode}]>",
+        f"【미국장 마감 — {today_str} [{mode}]】",
         f"　평가 합계: ${snap['eval_total']:,.2f}",
         f"　누적 손익: ${snap['pnl_total']:+,.2f}",
     ]
@@ -141,8 +141,8 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
                     * 100
                 )
             lines.append(
-                f"　{p['symbol']:<6} {p['qty']:>4}주 "
-                f"@ ${p['avg_price_usd']:.2f} → ${p['current_price_usd']:.2f} "
+                f"　{p['symbol']:<6} {p['qty']:>4,}주 "
+                f"@ ${p['avg_price_usd']:,.2f} → ${p['current_price_usd']:,.2f} "
                 f"({pnl_pct:+.2f}%)"
             )
     else:

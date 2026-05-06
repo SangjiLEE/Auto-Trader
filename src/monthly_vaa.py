@@ -334,7 +334,7 @@ def _send_report(target, signal_date, positions, total, orders, results=None):
         return
     mode = "모의" if config.KIS_ENV == "paper" else "실"
     lines = [
-        f"<경계형 자산배분 (VAA) — 월간 [{mode}]>",
+        f"【경계형 자산배분 (VAA) — 월간 [{mode}]】",
         f"　신호 날짜: {signal_date}",
         f"　타겟: {target} ({ASSET_NAMES.get(target, '?')})",
         f"　총평가: {total:,}원",

@@ -165,9 +165,11 @@ def format_report_kr(days: int, trades: list[dict], strategy_stats: dict, eval_d
 
     total_kr = realized_kr + kr_unrealized
     pct = total_kr / INITIAL_CAPITAL * 100
+    realized_pct = realized_kr / INITIAL_CAPITAL * 100
+    unrealized_pct = kr_unrealized / INITIAL_CAPITAL * 100
 
     lines = [
-        f"<주간 종합 리포트 (KR) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]>",
+        f"【주간 종합 리포트 (KR) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]】",
         f"　기간: 최근 {days}일",
         "",
         "◾️KR 자본 현황",
@@ -198,13 +200,13 @@ def format_report_kr(days: int, trades: list[dict], strategy_stats: dict, eval_d
             ts = t["executed_at"][:16] if t["executed_at"] else "?"
             lines.append(
                 f"　{ts} {t['strategy']:<12} {t['side'].upper()} {t['symbol']} "
-                f"{t['quantity']}주 @ ₩{t['price']:.0f}"
+                f"{t['quantity']:,}주 @ ₩{t['price']:,.0f}"
             )
 
     lines.append("")
     lines.append("◾️전체 실현수익률")
-    lines.append(f"　실현 누적: ₩{realized_kr:+,}")
-    lines.append(f"　미실현: ₩{kr_unrealized:+,}")
+    lines.append(f"　실현 누적: ₩{realized_kr:+,} ({realized_pct:+.2f}%)")
+    lines.append(f"　미실현: ₩{kr_unrealized:+,} ({unrealized_pct:+.2f}%)")
     lines.append("　─────────")
     lines.append(f"　KR 총 누적: ₩{total_kr:+,} ({pct:+.2f}%)")
     lines.append(f"　(초기 KR 시드 ₩{INITIAL_CAPITAL:,} 대비)")
@@ -234,7 +236,7 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
     unr_pct = us_unrealized_usd / sleeve_usd * 100 if sleeve_usd > 0 else 0
 
     lines = [
-        f"<주간 종합 리포트 (US) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]>",
+        f"【주간 종합 리포트 (US) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]】",
         f"　기간: 최근 {days}일",
         "",
         "◾️US 자본 현황",
@@ -265,7 +267,7 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
             ts = t["executed_at"][:16] if t["executed_at"] else "?"
             lines.append(
                 f"　{ts} {t['strategy']:<12} {t['side'].upper()} {t['symbol']} "
-                f"{t['quantity']}주 @ ${t['price']:.2f}"
+                f"{t['quantity']:,}주 @ ${t['price']:,.2f}"
             )
 
     lines.append("")
@@ -277,8 +279,8 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
                 if h["avg_price_usd"] > 0 else 0
             )
             lines.append(
-                f"　{h['symbol']:<6} {h['qty']}주 @ ${h['avg_price_usd']:.2f} "
-                f"(현재 ${h['current_price_usd']:.2f}, {pnl_pct:+.2f}%)"
+                f"　{h['symbol']:<6} {h['qty']:,}주 @ ${h['avg_price_usd']:,.2f} "
+                f"(현재 ${h['current_price_usd']:,.2f}, {pnl_pct:+.2f}%)"
             )
     else:
         lines.append("　없음")
