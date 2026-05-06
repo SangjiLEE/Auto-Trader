@@ -56,3 +56,10 @@ Thumbs.db
 
 # 백테스트 결과 (민감 정보는 아니지만 용량 큼)
 backtest_results/
+
+# DB 백업 (data-YYYY-MM-DD.db.gz)
+backups/
+
+# Earnings 캐시
+.earnings_cache.json
+.env.save

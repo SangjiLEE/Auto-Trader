@@ -25,6 +25,7 @@ from . import fear_greed
 from . import kis_api
 from . import kis_auth
 from . import notify
+from . import portfolio_guard
 from . import realized_pnl
 
 KR_SEED_KRW = 50_000_000  # 실현수익률 분모
@@ -268,6 +269,7 @@ def _send_evening_report(snap: dict, prev: dict | None) -> None:
     notify.send("\n".join(lines), channel=notify.CHANNEL_KR_DAILY)
 
 
+@notify.with_error_alert("daily_snapshot")
 def main() -> int:
     parser = argparse.ArgumentParser(description="일일 계좌 스냅샷")
     parser.add_argument(
@@ -304,6 +306,13 @@ def main() -> int:
     except kis_api.KISAPIError as e:
         print(f"[스냅샷 실패] {e}")
         return 3
+
+    # 포트폴리오 max DD 가드레일 갱신 (halt/recover 자동 판정)
+    guard_state = portfolio_guard.update_drawdown(snap["total_value"])
+    if guard_state["halted"]:
+        print(f"[⚠️ HALT 활성] {guard_state['halt_reason']}")
+    elif guard_state["current_dd_pct"] < portfolio_guard.RECOVERY_THRESHOLD_PCT:
+        print(f"[가드 경고] DD {guard_state['current_dd_pct']:+.2f}% (halt {portfolio_guard.HALT_THRESHOLD_PCT}% 임계)")
 
     # Telegram 저녁 보고
     _send_evening_report(snap, prev_snap)

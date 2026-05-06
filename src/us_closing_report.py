@@ -169,6 +169,7 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
     notify.send("\n".join(lines), channel=notify.CHANNEL_US_DAILY)
 
 
+@notify.with_error_alert("us_closing_report")
 def main() -> int:
     try:
         config.validate()
