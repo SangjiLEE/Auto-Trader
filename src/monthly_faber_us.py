@@ -52,6 +52,7 @@ from . import kis_auth
 from . import load_candles
 from . import notify
 from . import place_overseas_order
+from . import realized_pnl
 from . import strategy_faber as faber
 
 # Universe
@@ -331,27 +332,38 @@ def _send_report(weights, signal_date, holdings, total_usd, orders, results=None
     active_syms = [s for s, w in weights.items() if w > 0]
 
     lines = [
-        f"📊 추세 추종 분산 (Faber US) — 월간 [{mode}]",
-        f"신호 날짜: {signal_date}",
-        f"활성 자산 ({n_active}/7): {', '.join(active_syms) if active_syms else '없음 (현금)'}",
-        f"US 슬롯: ${total_usd:,.2f}",
+        f"<추세 추종 분산 (Faber US) — 월간 [{mode}]>",
+        f"　신호 날짜: {signal_date}",
+        f"　활성 자산 ({n_active}/7): {', '.join(active_syms) if active_syms else '없음 (현금)'}",
+        f"　US 슬롯: ${total_usd:,.2f}",
         "",
     ]
+
     if not orders:
-        lines.append("변경 없음 (타겟 = 현재)")
+        lines.append("◾️실행 결과")
+        lines.append("　변경 없음 (타겟 = 현재)")
     elif results is None:
-        lines.append("[Plan]")
+        lines.append("◾️계획 (드라이런)")
         for side, sym, qty in orders:
-            lines.append(f"  {side} {sym} {qty}주")
+            lines.append(f"　{side} {sym} {qty}주")
     else:
-        lines.append("[실행 결과]")
+        lines.append("◾️실행 결과")
         for r in results:
             status_emoji = "✅" if r.get("status") == "OK" else "❌"
             fill = r.get("fill_status", "")
             lines.append(
-                f"  {status_emoji} {r['side']} {r['symbol']} "
+                f"　{status_emoji} {r['side']} {r['symbol']} "
                 f"{r.get('qty', '?')}주 [{fill}]"
             )
+
+    # 전체 실현수익률
+    realized, _cur = realized_pnl.realized_for_strategy(STRATEGY_TAG)
+    pct = realized_pnl.pct(realized, total_usd)
+    lines.append("")
+    lines.append("◾️전체 실현수익률")
+    lines.append(f"　Faber 누적 실현: ${realized:+,.2f} ({pct:+.2f}%)")
+    lines.append(f"　(US 슬리브 ${total_usd:,.0f} 대비)")
+
     notify.send("\n".join(lines), channel=notify.CHANNEL_US_REALTIME)
 
 

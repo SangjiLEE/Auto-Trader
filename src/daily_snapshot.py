@@ -25,6 +25,10 @@ from . import fear_greed
 from . import kis_api
 from . import kis_auth
 from . import notify
+from . import realized_pnl
+
+KR_SEED_KRW = 50_000_000  # 실현수익률 분모
+KR_STRATEGIES = ["vaa"]   # KR 시장 strategy 목록
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS daily_snapshots (
@@ -202,58 +206,66 @@ def _get_previous_snapshot() -> dict | None:
 
 
 def _send_evening_report(snap: dict, prev: dict | None) -> None:
-    """매일 장 마감 후(15:45) 저녁 보고서."""
+    """매일 장 마감 후(15:45) KR 저녁 보고서.
+
+    [채널 분리 원칙] 미국 포지션은 #미장-일일-마감보고서 로 별도 발송 (us_closing_report).
+    여기서는 KR 만 노출.
+    """
     if not notify.is_enabled():
         return
 
     today_str = pd.Timestamp.now().strftime("%-m/%-d (%a)")
     mode = "모의" if snap["env"] == "paper" else "실거래"
 
+    # 헤더 블록
     lines = [
-        f"환경: {mode}",
-        f"총평가: {snap['total_value']:>13,}원",
-        f"누적손익: {snap['pnl_amount']:+,}원",
-        fear_greed.status_text(),
+        f"<장 마감 — {today_str} [{mode}]>",
+        f"　총평가: {snap['total_value']:,}원",
+        f"　누적손익: {snap['pnl_amount']:+,}원",
     ]
+
+    # 공포·탐욕 (이모지 제거)
+    fg = fear_greed.fetch_index()
+    fg_value = fg.get("value", "?")
+    fg_class = fg.get("classification", "?")
+    lines.append(f"　공포·탐욕: {fg_value} ({fg_class})")
 
     if prev is not None and prev["total_value"] > 0:
         diff = snap["total_value"] - prev["total_value"]
         diff_pct = diff / prev["total_value"] * 100
-        sign = "📈" if diff >= 0 else "📉"
-        lines.append(f"전일 대비: {diff:+,}원 ({diff_pct:+.2f}%) {sign}")
+        lines.append(f"　전일 대비: {diff:+,}원 ({diff_pct:+.2f}%)")
     lines.append("")
 
+    # 국내 포지션
+    lines.append("◾️국내 포지션")
     if snap["positions"]:
-        lines.append("[국내 포지션]")
         for p in snap["positions"]:
             pnl_pct = 0
             if p["avg_price"] > 0:
                 pnl_pct = (p["current_price"] - p["avg_price"]) / p["avg_price"] * 100
             lines.append(
-                f"  {p['symbol']} {p['qty']}주 (수익률 {pnl_pct:+.2f}%)"
+                f"　{p['symbol']} {p['qty']}주 (수익률 {pnl_pct:+.2f}%)"
             )
     else:
-        lines.append("[국내 포지션] 없음")
+        lines.append("　없음")
 
-    overseas = snap.get("overseas_positions") or []
-    if overseas:
-        lines.append("")
-        lines.append("[미국 포지션]")
-        for p in overseas:
-            pnl_pct = 0
-            if p["avg_price_usd"] > 0:
-                pnl_pct = (
-                    (p["current_price_usd"] - p["avg_price_usd"])
-                    / p["avg_price_usd"]
-                    * 100
-                )
-            lines.append(
-                f"  {p['symbol']} {p['qty']}주 (${p['current_price_usd']:.2f}, "
-                f"{pnl_pct:+.2f}%)"
-            )
+    # 전체 실현수익률 (KR strategy 합산)
+    realized_map = realized_pnl.realized_for_strategies(KR_STRATEGIES)
+    realized_krw = realized_map["krw"]
+    realized_pct = realized_pnl.pct(realized_krw, KR_SEED_KRW)
 
-    msg = f"<b>🌇 장 마감 — {today_str}</b>\n\n" + "\n".join(lines)
-    notify.send(msg, channel=notify.CHANNEL_KR_DAILY)
+    # 미실현 = total_value - cash - realized 의 단순 추정 대신
+    # KR 보유 종목들의 평가손익 합산으로 직접 계산
+    unrealized_krw = sum(p.get("pnl_amount", 0) for p in snap["positions"])
+    unrealized_pct_v = realized_pnl.pct(unrealized_krw, KR_SEED_KRW)
+
+    lines.append("")
+    lines.append("◾️전체 실현수익률")
+    lines.append(f"　실현 누적: ₩{int(realized_krw):+,} ({realized_pct:+.2f}%)")
+    lines.append(f"　미실현: ₩{int(unrealized_krw):+,} ({unrealized_pct_v:+.2f}%)")
+    lines.append(f"　(초기 KR 시드 ₩{KR_SEED_KRW:,} 대비)")
+
+    notify.send("\n".join(lines), channel=notify.CHANNEL_KR_DAILY)
 
 
 def main() -> int:

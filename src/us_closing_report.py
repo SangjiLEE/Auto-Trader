@@ -21,6 +21,12 @@ from . import db
 from . import kis_api
 from . import kis_auth
 from . import notify
+from . import realized_pnl
+
+US_STRATEGIES = ["faber_us", "swing_v3", "catalyst"]
+# US 슬리브 분모 = 총 ALLOCATION 합계 / USD_KRW
+USD_KRW_ESTIMATE = 1410
+US_SLEEVE_KRW_RATIO = 0.45  # Faber 15% + NVDA v3 5% + Catalyst 25%
 
 # 미국 종가 스냅샷 전용 테이블 (KR 스냅샷과 분리)
 _SCHEMA = """
@@ -110,21 +116,22 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
     today_str = pd.Timestamp.now().strftime("%-m/%-d (%a) %H:%M KST")
     mode = "모의" if config.KIS_ENV == "paper" else "실거래"
 
+    # 헤더 블록
     lines = [
-        f"환경: {mode}",
-        f"평가 합계: ${snap['eval_total']:,.2f}",
-        f"누적 손익: ${snap['pnl_total']:+,.2f}",
+        f"<미국장 마감 — {today_str} [{mode}]>",
+        f"　평가 합계: ${snap['eval_total']:,.2f}",
+        f"　누적 손익: ${snap['pnl_total']:+,.2f}",
     ]
 
     if prev is not None and prev["eval_total"] > 0:
         diff = snap["eval_total"] - prev["eval_total"]
         diff_pct = diff / prev["eval_total"] * 100
-        sign = "📈" if diff >= 0 else "📉"
-        lines.append(f"전 영업일 대비: ${diff:+,.2f} ({diff_pct:+.2f}%) {sign}")
+        lines.append(f"　전 영업일 대비: ${diff:+,.2f} ({diff_pct:+.2f}%)")
     lines.append("")
 
+    # 미국 보유 포지션
+    lines.append("◾️미국 보유 포지션")
     if snap["positions"]:
-        lines.append("[미국 보유 포지션]")
         for p in snap["positions"]:
             pnl_pct = 0.0
             if p["avg_price_usd"] > 0:
@@ -134,15 +141,32 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
                     * 100
                 )
             lines.append(
-                f"  {p['symbol']:<6} {p['qty']:>4}주 "
+                f"　{p['symbol']:<6} {p['qty']:>4}주 "
                 f"@ ${p['avg_price_usd']:.2f} → ${p['current_price_usd']:.2f} "
                 f"({pnl_pct:+.2f}%)"
             )
     else:
-        lines.append("[미국 보유 포지션] 없음")
+        lines.append("　없음")
 
-    msg = f"<b>🇺🇸 미국장 마감 — {today_str}</b>\n\n" + "\n".join(lines)
-    notify.send(msg, channel=notify.CHANNEL_US_DAILY)
+    # 전체 실현수익률 (US strategy 합산)
+    realized_map = realized_pnl.realized_for_strategies(US_STRATEGIES)
+    realized_usd = realized_map["usd"]
+
+    # US 슬리브 분모 (KR 시드 ₩50M * 45% / USD_KRW)
+    sleeve_usd = 50_000_000 * US_SLEEVE_KRW_RATIO / USD_KRW_ESTIMATE
+    realized_pct_v = realized_pnl.pct(realized_usd, sleeve_usd)
+
+    # 미실현 = snap 의 pnl_total (KIS 평단 기준)
+    unrealized_usd = snap["pnl_total"]
+    unr_pct = realized_pnl.pct(unrealized_usd, sleeve_usd)
+
+    lines.append("")
+    lines.append("◾️전체 실현수익률")
+    lines.append(f"　실현 누적: ${realized_usd:+,.2f} ({realized_pct_v:+.2f}%)")
+    lines.append(f"　미실현: ${unrealized_usd:+,.2f} ({unr_pct:+.2f}%)")
+    lines.append(f"　(US 슬리브 ≈ ${sleeve_usd:,.0f} 대비)")
+
+    notify.send("\n".join(lines), channel=notify.CHANNEL_US_DAILY)
 
 
 def main() -> int:
