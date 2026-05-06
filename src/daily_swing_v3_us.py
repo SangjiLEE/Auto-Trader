@@ -28,8 +28,10 @@ from . import kis_api
 from . import kis_auth
 from . import load_candles
 from . import market_regime as mr
+from . import idempotency
 from . import notify
 from . import place_overseas_order
+from . import portfolio_guard
 from . import realized_pnl
 from . import swing_strategy_v3 as v3
 
@@ -352,16 +354,16 @@ def get_v3_positions(symbol_data: dict[str, pd.DataFrame]) -> dict[str, v3.Posit
     return positions
 
 
-def log_trade(symbol, side, qty, price_usd, order_id, msg, regime_note=""):
+def log_trade(symbol, side, qty, price_usd, order_id, msg, regime_note="", idempotency_key=None):
     notes = f"{regime_note} | {msg}" if regime_note else msg
     with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO trades
-                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes)
-            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
+                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes, idempotency_key)
+            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
             """,
-            (symbol, side, qty, price_usd, config.KIS_ENV, STRATEGY_TAG, order_id, notes),
+            (symbol, side, qty, price_usd, config.KIS_ENV, STRATEGY_TAG, order_id, notes, idempotency_key),
         )
 
 
@@ -377,6 +379,10 @@ def confirm_execution() -> bool:
 
 def _send_report(swing_budget_usd, positions, scan_results, actions, results=None, latest_prices=None):
     if not notify.is_enabled():
+        return
+    # [#4 noise 절감] 거래 없고 보유 포지션도 없으면 알림 스킵
+    if not actions and not results and not positions:
+        print("[알림 스킵] 거래 없음 + 보유 없음 (noise 절감)")
         return
     today = pd.Timestamp.now().strftime("%-m/%-d (%a) %H:%M KST")
     mode = "모의" if config.KIS_ENV == "paper" else "실거래"
@@ -451,6 +457,7 @@ def _to_int(v):
         return 0
 
 
+@notify.with_error_alert("daily_swing_v3_us")
 def main() -> int:
     parser = argparse.ArgumentParser(description="US v3 자동 실행")
     parser.add_argument("--execute", action="store_true")
@@ -572,10 +579,15 @@ def main() -> int:
                 fg_targeted.add(sym)
 
     print("\n[진입 체크]")
+    # [가드레일] 포트폴리오 halt 시 신규 진입 전체 차단
+    portfolio_halt = portfolio_guard.is_halted()
+    if portfolio_halt:
+        print(f"  ⚠️ 포트폴리오 HALT 활성 ({portfolio_guard.status()['halt_reason']}) → 신규 진입 차단")
+
     # [Phase 2] US 슬리브 시장-와이드 체제 (SPY 기반) — BEAR 시 신규 진입 차단
     sleeve_regime = mr.detect_market_regime("US")
     print(f"  US 슬리브 시장 체제 (SPY 기반): {sleeve_regime}")
-    sleeve_block_entry = sleeve_regime == mr.REGIME_BEAR
+    sleeve_block_entry = sleeve_regime == mr.REGIME_BEAR or portfolio_halt
 
     # [B3 fix] MAX_POSITIONS 정확 카운팅:
     # - 부분익절 / F&G 분할매도 / DCA 매수 등은 포지션 수 변화 X
@@ -687,6 +699,14 @@ def main() -> int:
         side_lower = a["action"].lower()
         sym = a["symbol"]
         requested_qty = a["qty"]
+
+        # [멱등성] 동일 키 24h 내 실행 시 skip
+        idem_key = idempotency.make_key(STRATEGY_TAG, sym, a["action"], requested_qty)
+        if idempotency.already_executed(idem_key):
+            print(f"\n[{i}/{len(actions)}] [멱등 SKIP] {idem_key}")
+            results.append({**a, "status": "SKIP", "reason": "duplicate"})
+            continue
+
         print(f"\n[{i}/{len(actions)}] {a['action']} {sym} {requested_qty}주...")
         try:
             fill = _execute_with_fill_check_us(
@@ -707,14 +727,16 @@ def main() -> int:
             elif status == "PARTIAL":
                 print(f"  ⚠️ PARTIAL {filled}/{requested_qty}주 @ ${price:.2f} (주문 {odno})")
                 log_trade(sym, side_lower, filled, price, odno,
-                          f"PARTIAL {filled}/{requested_qty} | {msg}", a["reason"])
+                          f"PARTIAL {filled}/{requested_qty} | {msg}", a["reason"],
+                          idempotency_key=idem_key)
                 results.append({
                     **a, "status": "OK", "qty": filled, "filled_qty": filled,
                     "price": price, "fill_status": "PARTIAL",
                 })
             else:
                 print(f"  ✅ FILLED {filled}주 @ ${price:.2f} (주문 {odno})")
-                log_trade(sym, side_lower, filled, price, odno, msg, a["reason"])
+                log_trade(sym, side_lower, filled, price, odno, msg, a["reason"],
+                          idempotency_key=idem_key)
                 results.append({
                     **a, "status": "OK", "qty": filled, "filled_qty": filled,
                     "price": price, "fill_status": "FILLED",

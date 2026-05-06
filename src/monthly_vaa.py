@@ -39,8 +39,10 @@ from . import dual_momentum as dm
 from . import kis_api
 from . import kis_auth
 from . import load_candles
+from . import idempotency
 from . import notify
 from . import place_order
+from . import portfolio_guard
 from . import realized_pnl
 from . import strategy_vaa as vaa
 
@@ -193,15 +195,15 @@ def confirm_execution() -> bool:
         return False
 
 
-def log_trade(symbol, side, qty, price, order_id, msg):
+def log_trade(symbol, side, qty, price, order_id, msg, idempotency_key=None):
     with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO trades
-                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes)
-            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
+                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes, idempotency_key)
+            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
             """,
-            (symbol, side, qty, price, config.KIS_ENV, STRATEGY_TAG, order_id, msg),
+            (symbol, side, qty, price, config.KIS_ENV, STRATEGY_TAG, order_id, msg, idempotency_key),
         )
 
 
@@ -226,6 +228,16 @@ def execute_orders(
         side_ko = "매도" if side == "SELL" else "매수"
         side_param = side.lower()
         price = prices.get(symbol, 0)
+
+        # [멱등성] 동일 (strategy, symbol, side, qty, today) 24h 내 실행 시 skip
+        idem_key = idempotency.make_key(STRATEGY_TAG, symbol, side, qty)
+        if idempotency.already_executed(idem_key):
+            print(f"\n[{i}/{len(orders)}] [멱등 SKIP] {idem_key}")
+            results.append({
+                "status": "SKIP", "side": side, "symbol": symbol, "qty": qty,
+                "reason": "duplicate (idempotency)",
+            })
+            continue
 
         print(f"\n[{i}/{len(orders)}] {side_ko} {symbol} ({ASSET_NAMES.get(symbol, '?')}) {qty}주...")
 
@@ -268,7 +280,8 @@ def execute_orders(
             elif fill_status == "PARTIAL":
                 print(f"  ⚠️ PARTIAL {filled_qty}/{qty}주 @ {price:,} ({odno})")
                 log_trade(symbol, side_param, filled_qty, price, odno,
-                          f"VAA PARTIAL {filled_qty}/{qty} | {msg}")
+                          f"VAA PARTIAL {filled_qty}/{qty} | {msg}",
+                          idempotency_key=idem_key)
                 results.append({
                     "status": "OK", "side": side, "symbol": symbol,
                     "qty": filled_qty, "filled_qty": filled_qty,
@@ -276,7 +289,8 @@ def execute_orders(
                 })
             else:
                 print(f"  ✅ FILLED {filled_qty}주 @ {price:,} ({odno})")
-                log_trade(symbol, side_param, filled_qty, price, odno, f"VAA | {msg}")
+                log_trade(symbol, side_param, filled_qty, price, odno, f"VAA | {msg}",
+                          idempotency_key=idem_key)
                 results.append({
                     "status": "OK", "side": side, "symbol": symbol,
                     "qty": filled_qty, "filled_qty": filled_qty,
@@ -369,6 +383,7 @@ def _send_report(target, signal_date, positions, total, orders, results=None):
     notify.send("\n".join(lines), channel=notify.CHANNEL_KR_REALTIME)
 
 
+@notify.with_error_alert("monthly_vaa")
 def main() -> int:
     parser = argparse.ArgumentParser(description="VAA 월간 리밸런싱")
     parser.add_argument("--refresh", action="store_true",
@@ -410,6 +425,14 @@ def main() -> int:
 
     # 4. 주문 plan
     orders, non_universe = compute_plan(target, positions, total, prices)
+
+    # [가드레일] halt 활성 시 BUY 차단 (SELL 청산 룰은 정상 동작)
+    if portfolio_guard.is_halted():
+        before_n = len(orders)
+        orders = [(s, sym, q) for (s, sym, q) in orders if s != "BUY"]
+        if before_n != len(orders):
+            print(f"[⚠️ HALT] BUY 주문 {before_n - len(orders)}건 차단 ({portfolio_guard.status()['halt_reason']})")
+
     print_report(target, signal_date, positions, cash, total, prices, orders, non_universe)
 
     if not orders:

@@ -47,8 +47,10 @@ from . import safety
 from . import earnings_calendar as ec
 from . import kis_api
 from . import kis_auth
+from . import idempotency
 from . import notify
 from . import place_overseas_order
+from . import portfolio_guard
 from . import realized_pnl
 
 # [#2 개선] universe 확장 (5 → 11종목, 거래 빈도 ↑)
@@ -256,15 +258,15 @@ def clear_catalyst_state(symbol: str) -> None:
         )
 
 
-def log_trade(symbol, side, qty, price_usd, order_id, msg):
+def log_trade(symbol, side, qty, price_usd, order_id, msg, idempotency_key=None):
     with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO trades
-                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes)
-            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
+                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes, idempotency_key)
+            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
             """,
-            (symbol, side, qty, price_usd, config.KIS_ENV, STRATEGY_TAG, order_id, msg),
+            (symbol, side, qty, price_usd, config.KIS_ENV, STRATEGY_TAG, order_id, msg, idempotency_key),
         )
 
 
@@ -326,8 +328,17 @@ def confirm_execution() -> bool:
 def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, prices=None):
     if not notify.is_enabled():
         return
-    mode = "모의" if config.KIS_ENV == "paper" else "실"
+    # [#4 noise 절감] 거래 없고 보유 없고 catalyst window 도 없으면 스킵
     today = date.today()
+    has_active_window = any(
+        ec.is_in_catalyst_window(calendar.get(s, []), today,
+                                 CATALYST_DAYS_BEFORE, CATALYST_DAYS_AFTER)[0]
+        for s in UNIVERSE
+    )
+    if not actions and not results and not holdings and not has_active_window:
+        print("[알림 스킵] 거래/보유/catalyst window 모두 없음 (noise 절감)")
+        return
+    mode = "모의" if config.KIS_ENV == "paper" else "실"
 
     # Catalyst window 활성 종목
     active_syms = []
@@ -405,6 +416,7 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
     notify.send("\n".join(lines), channel=notify.CHANNEL_US_REALTIME)
 
 
+@notify.with_error_alert("daily_catalyst")
 def main() -> int:
     parser = argparse.ArgumentParser(description="Catalyst 일간 매매")
     parser.add_argument("--refresh", action="store_true", help="실적 캘린더 갱신")
@@ -544,8 +556,14 @@ def main() -> int:
 
     # 6. [#7 개선] 매수 룰 — 쿨다운 + entry-aware
     print(f"\n[5] 매수 평가 (재진입 쿨다운 {REENTRY_COOLDOWN_DAYS}거래일)...")
+
+    # [가드레일] 포트폴리오 halt 시 신규 매수 전체 차단
+    portfolio_halt = portfolio_guard.is_halted()
+    if portfolio_halt:
+        print(f"  ⚠️ 포트폴리오 HALT 활성 ({portfolio_guard.status()['halt_reason']}) → 매수 전체 차단")
+
     new_buys = []
-    for sym in active_syms:
+    for sym in [] if portfolio_halt else active_syms:
         # catalyst 가 이미 보유 중이면 skip
         if sym in catalyst_holdings:
             print(f"  {sym}: catalyst 이미 보유 → skip")
@@ -606,6 +624,14 @@ def main() -> int:
         side_lower = a["side"].lower()
         sym = a["symbol"]
         qty = a["qty"]
+
+        # [멱등성] 동일 키 24h 내 실행 시 skip
+        idem_key = idempotency.make_key(STRATEGY_TAG, sym, a["side"], qty)
+        if idempotency.already_executed(idem_key):
+            print(f"\n[{i}/{len(actions)}] [멱등 SKIP] {idem_key}")
+            results.append({**a, "status": "SKIP", "reason": "duplicate"})
+            continue
+
         print(f"\n[{i}/{len(actions)}] {a['side']} {sym} {qty}주...")
         try:
             fill = execute_with_fill_check(sym, side_lower, qty, token)
@@ -621,7 +647,8 @@ def main() -> int:
             else:
                 print(f"  {'⚠️' if status == 'PARTIAL' else '✅'} {status} {filled}/{qty}주 @ ${price:.2f} ({odno})")
                 log_trade(sym, side_lower, filled, price, odno,
-                          f"catalyst {status} | {a['reason']} | {msg}")
+                          f"catalyst {status} | {a['reason']} | {msg}",
+                          idempotency_key=idem_key)
                 # [#3 개선] 매수 후 state init / 매도 후 state clear
                 if side_lower == "buy" and filled > 0:
                     save_catalyst_state(sym, False, price)  # trailing 비활성, peak=매수가
