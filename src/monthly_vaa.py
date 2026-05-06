@@ -34,6 +34,7 @@ from . import check_balance
 from . import check_price
 from . import config
 from . import db
+from . import safety
 from . import dual_momentum as dm
 from . import kis_api
 from . import kis_auth
@@ -210,8 +211,7 @@ def execute_orders(
     token: str,
 ) -> list[dict]:
     """[B2 fill check 통합] 주문 전후 잔고 차분으로 실제 체결량 확인."""
-    if config.KIS_ENV != "paper":
-        raise RuntimeError("실거래 모드 차단. KIS_ENV=paper 확인.")
+    safety.assert_paper(label="VAA 매매")
 
     results: list[dict] = []
     print("\n" + "=" * 64)
@@ -379,9 +379,7 @@ def main() -> int:
                         help="확인 프롬프트 자동 yes (스케줄용)")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print(f"[차단] KIS_ENV={config.KIS_ENV} — 실거래 모드는 --execute 차단됨.")
-        print("       .env 의 KIS_ENV=paper 인지 확인.")
+    if safety.block_execute_if_real(args.execute):
         return 3
 
     if args.refresh:

@@ -43,6 +43,7 @@ from . import check_overseas_balance
 from . import check_overseas_price
 from . import config
 from . import db
+from . import safety
 from . import earnings_calendar as ec
 from . import kis_api
 from . import kis_auth
@@ -411,8 +412,7 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true", help="자동 yes")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print(f"[차단] KIS_ENV={config.KIS_ENV} — 실거래 차단.")
+    if safety.block_execute_if_real(args.execute):
         return 3
 
     today = date.today()

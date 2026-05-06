@@ -46,6 +46,7 @@ from . import check_overseas_balance
 from . import check_overseas_price
 from . import config
 from . import db
+from . import safety
 from . import dual_momentum as dm
 from . import kis_api
 from . import kis_auth
@@ -207,8 +208,7 @@ def execute_orders(
     token: str,
 ) -> list[dict]:
     """[B2 fill check 통합] 미국 ETF 매매 + 잔고 차분 reconciliation."""
-    if config.KIS_ENV != "paper":
-        raise RuntimeError("실거래 모드 차단. KIS_ENV=paper 확인.")
+    safety.assert_paper(label="미국 ETF 매매")
 
     results: list[dict] = []
     print("\n" + "=" * 64)
@@ -374,8 +374,7 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print(f"[차단] KIS_ENV={config.KIS_ENV} — 실거래 차단.")
+    if safety.block_execute_if_real(args.execute):
         return 3
 
     if args.refresh:
