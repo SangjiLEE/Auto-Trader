@@ -35,9 +35,9 @@
     </array>
 
     <key>StandardOutPath</key>
-    <string>/Users/sangjisair/projects/auto-trading-bot/logs/daily_catalyst.log</string>
+    <string>/Users/sangjisair/Desktop/MyProject/autoTrading/logs/daily_catalyst.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/sangjisair/projects/auto-trading-bot/logs/daily_catalyst.err</string>
+    <string>/Users/sangjisair/Desktop/MyProject/autoTrading/logs/daily_catalyst.err</string>
 
     <key>RunAtLoad</key>
     <false/>
@@ -51,6 +51,6 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/Users/sangjisair/projects/auto-trading-bot</string>
+    <string>/Users/sangjisair/Desktop/MyProject/autoTrading</string>
 </dict>
 </plist>

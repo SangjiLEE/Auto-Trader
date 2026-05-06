@@ -30,9 +30,9 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/sangjisair/projects/auto-trading-bot/logs/weekly_report.log</string>
+    <string>/Users/sangjisair/Desktop/MyProject/autoTrading/logs/weekly_report.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/sangjisair/projects/auto-trading-bot/logs/weekly_report.err</string>
+    <string>/Users/sangjisair/Desktop/MyProject/autoTrading/logs/weekly_report.err</string>
 
     <key>RunAtLoad</key>
     <false/>
@@ -46,6 +46,6 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/Users/sangjisair/projects/auto-trading-bot</string>
+    <string>/Users/sangjisair/Desktop/MyProject/autoTrading</string>
 </dict>
 </plist>
