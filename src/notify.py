@@ -61,6 +61,7 @@ CHANNEL_KR_WEEKLY = "kr_weekly"
 CHANNEL_US_REALTIME = "us_realtime"
 CHANNEL_US_DAILY = "us_daily"
 CHANNEL_US_WEEKLY = "us_weekly"
+CHANNEL_SYSTEM_ERROR = "system_error"  # 시스템 / API / 매매 실패 전용
 
 # Channel kind → 환경변수 이름
 _CHANNEL_ENV_MAP = {
@@ -70,6 +71,7 @@ _CHANNEL_ENV_MAP = {
     CHANNEL_US_REALTIME: "SLACK_WEBHOOK_US_REALTIME",
     CHANNEL_US_DAILY: "SLACK_WEBHOOK_US_DAILY",
     CHANNEL_US_WEEKLY: "SLACK_WEBHOOK_US_WEEKLY",
+    CHANNEL_SYSTEM_ERROR: "SLACK_WEBHOOK_SYSTEM_ERROR",
 }
 
 
@@ -153,6 +155,74 @@ def send(message: str, channel: str | None = None, silent: bool = False) -> bool
     slack_ok = _send_slack(message, channel) if _slack_enabled() else False
     telegram_ok = _send_telegram(message, silent) if _telegram_enabled() else False
     return slack_ok or telegram_ok
+
+
+def with_error_alert(module_name: str):
+    """main() 함수 데코레이터 — 처리되지 않은 예외 자동 캐치 + send_error.
+
+    예:
+        @notify.with_error_alert("monthly_vaa")
+        def main() -> int:
+            ...
+    """
+    def decorator(fn):
+        import functools
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except SystemExit:
+                raise
+            except BaseException as e:
+                send_error(
+                    title=f"{type(e).__name__}: {str(e)[:200]}",
+                    module=module_name,
+                    exc=e,
+                )
+                raise
+        return wrapper
+    return decorator
+
+
+def send_error(
+    title: str,
+    message: str = "",
+    exc: BaseException | None = None,
+    module: str | None = None,
+) -> bool:
+    """시스템 / API / 매매 실패 전용 알림.
+
+    SLACK_WEBHOOK_SYSTEM_ERROR 가 있으면 #시스템-에러 채널, 없으면 default URL.
+
+    예:
+        try:
+            ...
+        except KISAPIError as e:
+            notify.send_error("KIS API 실패", module="monthly_vaa", exc=e)
+            raise
+    """
+    import traceback
+    from datetime import datetime
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S KST")
+    mod_str = f"[{module}] " if module else ""
+
+    lines = [
+        f"*🚨 시스템 에러 — {ts}*",
+        f"　{mod_str}{title}",
+    ]
+    if message:
+        lines.append(f"　{message}")
+    if exc is not None:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        # Slack 메시지 길이 제한 고려 (최대 ~3000자 안전선)
+        tb_short = tb if len(tb) < 2500 else tb[:1200] + "\n... (truncated) ...\n" + tb[-1200:]
+        lines.append("```")
+        lines.append(tb_short.strip())
+        lines.append("```")
+
+    return send("\n".join(lines), channel=CHANNEL_SYSTEM_ERROR)
 
 
 def notify_rebalance_start(env: str, target: str, plan_summary: str) -> bool:

@@ -27,6 +27,7 @@ from . import config
 from . import db
 from . import kis_auth
 from . import labels
+from . import live_metrics
 from . import notify
 
 INITIAL_CAPITAL = 50_000_000
@@ -138,6 +139,40 @@ def fetch_current_eval(token: str) -> dict:
     }
 
 
+def _format_metrics_block(strategies: list[str], days: int, currency: str = "₩") -> list[str]:
+    """공통 성과 메트릭 블록 (Sharpe + win rate).
+
+    strategies: ['vaa'] 또는 ['faber_us', 'swing_v3', 'catalyst']
+    """
+    sharpe = live_metrics.sharpe_ratio(live_metrics.daily_returns(max(days, 30)))
+    vol = live_metrics.annualized_volatility(live_metrics.daily_returns(max(days, 30)))
+
+    lines = ["*◾️성과 메트릭*"]
+    if sharpe is None:
+        lines.append("　Sharpe: N/A (데이터 부족, 30일+ 누적 필요)")
+    else:
+        lines.append(f"　Sharpe (annualized): {sharpe:+.2f}")
+    if vol is not None:
+        lines.append(f"　변동성 (annualized): {vol*100:.2f}%")
+
+    # 전략별 win rate (period 무제한 = 누적)
+    for s in strategies:
+        stats = live_metrics.win_rate_stats(strategy=s)
+        if stats["n_cycles"] == 0:
+            lines.append(f"　{labels.strategy_kr(s)}: 완료 cycle 없음")
+            continue
+        pf = stats["profit_factor"]
+        pf_str = "∞" if pf == float("inf") else f"{pf:.2f}"
+        lines.append(
+            f"　{labels.strategy_kr(s)}: "
+            f"{stats['n_wins']}W/{stats['n_losses']}L "
+            f"({stats['win_rate']:.0f}% win) | "
+            f"PF {pf_str} | "
+            f"총 {currency}{stats['total_realized']:+,.0f}"
+        )
+    return lines
+
+
 def _is_kr_strategy(stats: dict) -> bool:
     """strategy_stats 한 항목이 KR 인지 (6자리 숫자 종목 보유)."""
     return any(sy.isdigit() and len(sy) == 6 for sy in stats["symbols"])
@@ -202,6 +237,9 @@ def format_report_kr(days: int, trades: list[dict], strategy_stats: dict, eval_d
                 f"　{ts} {t['strategy']:<12} {t['side'].upper()} {t['symbol']} "
                 f"{t['quantity']:,}주 @ ₩{t['price']:,.0f}"
             )
+
+    lines.append("")
+    lines.extend(_format_metrics_block(["vaa"], days, currency="₩"))
 
     lines.append("")
     lines.append("*◾️전체 실현수익률*")
@@ -286,6 +324,9 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
         lines.append("　없음")
 
     lines.append("")
+    lines.extend(_format_metrics_block(["faber_us", "swing_v3", "catalyst"], days, currency="$"))
+
+    lines.append("")
     lines.append("*◾️전체 실현수익률*")
     lines.append(f"　실현 누적: ${realized_us:+,.2f} ({realized_pct_v:+.2f}%)")
     lines.append(f"　미실현: ${us_unrealized_usd:+,.2f} ({unr_pct:+.2f}%)")
@@ -306,6 +347,7 @@ def format_report(days: int, trades: list[dict], strategy_stats: dict, eval_data
     )
 
 
+@notify.with_error_alert("weekly_report")
 def main() -> int:
     parser = argparse.ArgumentParser(description="주간 리포트")
     parser.add_argument("--days", type=int, default=7)
