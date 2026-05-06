@@ -51,8 +51,10 @@ from . import dual_momentum as dm
 from . import kis_api
 from . import kis_auth
 from . import load_candles
+from . import idempotency
 from . import notify
 from . import place_overseas_order
+from . import portfolio_guard
 from . import realized_pnl
 from . import strategy_faber as faber
 
@@ -190,15 +192,15 @@ def confirm_execution() -> bool:
         return False
 
 
-def log_trade(symbol, side, qty, price_usd, order_id, msg):
+def log_trade(symbol, side, qty, price_usd, order_id, msg, idempotency_key=None):
     with db.connection() as conn:
         conn.execute(
             """
             INSERT INTO trades
-                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes)
-            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?)
+                (symbol, side, quantity, price, executed_at, env, strategy, order_id, notes, idempotency_key)
+            VALUES (?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)
             """,
-            (symbol, side, qty, price_usd, config.KIS_ENV, STRATEGY_TAG, order_id, msg),
+            (symbol, side, qty, price_usd, config.KIS_ENV, STRATEGY_TAG, order_id, msg, idempotency_key),
         )
 
 
@@ -223,6 +225,16 @@ def execute_orders(
         side_ko = "매도" if side == "SELL" else "매수"
         side_param = side.lower()
         price = prices.get(sym, 0.0)
+
+        # [멱등성] 동일 키 24h 내 실행 시 skip
+        idem_key = idempotency.make_key(STRATEGY_TAG, sym, side, qty)
+        if idempotency.already_executed(idem_key):
+            print(f"\n[{i}/{len(orders)}] [멱등 SKIP] {idem_key}")
+            results.append({
+                "status": "SKIP", "side": side, "symbol": sym, "qty": qty,
+                "reason": "duplicate (idempotency)",
+            })
+            continue
 
         print(f"\n[{i}/{len(orders)}] {side_ko} {sym} ({ASSET_NAMES.get(sym, '?')}) {qty}주...")
 
@@ -267,14 +279,16 @@ def execute_orders(
             elif fill_status == "PARTIAL":
                 print(f"  ⚠️ PARTIAL {filled_qty}/{qty}주 @ ${price:.2f} ({odno})")
                 log_trade(sym, side_param, filled_qty, price, odno,
-                          f"Faber PARTIAL {filled_qty}/{qty} | {msg}")
+                          f"Faber PARTIAL {filled_qty}/{qty} | {msg}",
+                          idempotency_key=idem_key)
                 results.append({
                     "status": "OK", "side": side, "symbol": sym,
                     "qty": filled_qty, "price": price, "fill_status": "PARTIAL",
                 })
             else:
                 print(f"  ✅ FILLED {filled_qty}주 @ ${price:.2f} ({odno})")
-                log_trade(sym, side_param, filled_qty, price, odno, f"Faber | {msg}")
+                log_trade(sym, side_param, filled_qty, price, odno, f"Faber | {msg}",
+                          idempotency_key=idem_key)
                 results.append({
                     "status": "OK", "side": side, "symbol": sym,
                     "qty": filled_qty, "price": price, "fill_status": "FILLED",
@@ -367,6 +381,7 @@ def _send_report(weights, signal_date, holdings, total_usd, orders, results=None
     notify.send("\n".join(lines), channel=notify.CHANNEL_US_REALTIME)
 
 
+@notify.with_error_alert("monthly_faber_us")
 def main() -> int:
     parser = argparse.ArgumentParser(description="Faber Multi-Asset US 월간")
     parser.add_argument("--refresh", action="store_true")
@@ -401,6 +416,14 @@ def main() -> int:
     prices = fetch_us_prices(token)
 
     orders = compute_plan(weights, holdings, prices, sleeve_usd)
+
+    # [가드레일] halt 시 BUY 차단
+    if portfolio_guard.is_halted():
+        before_n = len(orders)
+        orders = [(s, sym, q) for (s, sym, q) in orders if s != "BUY"]
+        if before_n != len(orders):
+            print(f"[⚠️ HALT] BUY 주문 {before_n - len(orders)}건 차단 ({portfolio_guard.status()['halt_reason']})")
+
     print_report(weights, signal_date, holdings, sleeve_usd, prices, orders)
 
     if not orders:
