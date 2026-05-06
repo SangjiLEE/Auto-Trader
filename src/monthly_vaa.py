@@ -34,13 +34,17 @@ from . import check_balance
 from . import check_price
 from . import config
 from . import db
+from . import safety
 from . import dual_momentum as dm
 from . import kis_api
 from . import kis_auth
 from . import load_candles
 from . import notify
 from . import place_order
+from . import realized_pnl
 from . import strategy_vaa as vaa
+
+KR_SEED_KRW = 50_000_000  # 실현수익률 분모
 
 # VAA universe (3 offensive + 1 defensive)
 OFFENSIVE_SYMBOLS = ["069500", "133690", "360750"]
@@ -207,8 +211,7 @@ def execute_orders(
     token: str,
 ) -> list[dict]:
     """[B2 fill check 통합] 주문 전후 잔고 차분으로 실제 체결량 확인."""
-    if config.KIS_ENV != "paper":
-        raise RuntimeError("실거래 모드 차단. KIS_ENV=paper 확인.")
+    safety.assert_paper(label="VAA 매매")
 
     results: list[dict] = []
     print("\n" + "=" * 64)
@@ -331,27 +334,38 @@ def _send_report(target, signal_date, positions, total, orders, results=None):
         return
     mode = "모의" if config.KIS_ENV == "paper" else "실"
     lines = [
-        f"📊 경계형 자산배분 (VAA) — 월간 [{mode}]",
-        f"신호 날짜: {signal_date}",
-        f"타겟: {target} ({ASSET_NAMES.get(target, '?')})",
-        f"총평가: {total:,}원",
+        f"*【경계형 자산배분 (VAA) — 월간 [{mode}]】*",
+        f"　신호 날짜: {signal_date}",
+        f"　타겟: {target} ({ASSET_NAMES.get(target, '?')})",
+        f"　총평가: {total:,}원",
         "",
     ]
+
     if not orders:
-        lines.append("변경 없음 (타겟 = 현재)")
+        lines.append("*◾️실행 결과*")
+        lines.append("　변경 없음 (타겟 = 현재)")
     elif results is None:
-        lines.append("[Plan]")
+        lines.append("*◾️계획 (드라이런)*")
         for side, sym, qty in orders:
-            lines.append(f"  {side} {sym} {qty}주")
+            lines.append(f"　{side} {sym} {qty}주")
     else:
-        lines.append("[실행 결과]")
+        lines.append("*◾️실행 결과*")
         for r in results:
             status_emoji = "✅" if r.get("status") == "OK" else "❌"
             fill = r.get("fill_status", "")
             lines.append(
-                f"  {status_emoji} {r['side']} {r['symbol']} "
+                f"　{status_emoji} {r['side']} {r['symbol']} "
                 f"{r.get('filled_qty', r.get('qty', '?'))}주 [{fill}]"
             )
+
+    # 전체 실현수익률
+    realized, _cur = realized_pnl.realized_for_strategy(STRATEGY_TAG)
+    pct = realized_pnl.pct(realized, KR_SEED_KRW)
+    lines.append("")
+    lines.append("*◾️전체 실현수익률*")
+    lines.append(f"　VAA 누적 실현: ₩{int(realized):+,} ({pct:+.2f}%)")
+    lines.append(f"　(초기 KR 시드 ₩{KR_SEED_KRW:,} 대비)")
+
     notify.send("\n".join(lines), channel=notify.CHANNEL_KR_REALTIME)
 
 
@@ -365,9 +379,7 @@ def main() -> int:
                         help="확인 프롬프트 자동 yes (스케줄용)")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print(f"[차단] KIS_ENV={config.KIS_ENV} — 실거래 모드는 --execute 차단됨.")
-        print("       .env 의 KIS_ENV=paper 인지 확인.")
+    if safety.block_execute_if_real(args.execute):
         return 3
 
     if args.refresh:

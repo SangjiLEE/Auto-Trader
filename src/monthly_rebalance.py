@@ -23,6 +23,7 @@ from . import check_balance
 from . import check_price
 from . import config
 from . import db
+from . import safety
 from . import dual_momentum as dm
 from . import kis_api
 from . import kis_auth
@@ -229,10 +230,7 @@ def execute_orders(
     [B2 fix] 주문 전후 잔고 차분으로 실제 체결량 검증.
     부분 체결 / 거부 시 정확한 qty 만 DB 기록 → DB-broker 동기 유지.
     """
-    if config.KIS_ENV != "paper":
-        raise RuntimeError(
-            "실거래 모드에선 차단. .env에서 KIS_ENV=paper 확인"
-        )
+    safety.assert_paper(label="DM 월간 리밸런스")
 
     results: list[dict] = []
     print("\n" + "=" * 64)
@@ -498,8 +496,7 @@ def main() -> int:
         if not orders:
             print("\n변경 없음. 실행 생략.")
             return 0
-        if config.KIS_ENV != "paper":
-            print("\n[차단] 실거래 모드 아님. .env에서 KIS_ENV=paper 로 설정 후 재시도.")
+        if safety.block_execute_if_real(args.execute):
             return 6
         if args.yes:
             print("\n[--yes] 확인 프롬프트 건너뜀. 자동 진행.")

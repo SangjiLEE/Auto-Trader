@@ -25,6 +25,7 @@ from . import check_balance
 from . import check_price
 from . import config
 from . import db
+from . import safety
 from . import fear_greed
 from . import indicators
 from . import kis_api
@@ -479,8 +480,7 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print("[차단] 실거래 모드. KIS_ENV=paper 확인.")
+    if safety.block_execute_if_real(args.execute):
         return 1
 
     print("=" * 64)

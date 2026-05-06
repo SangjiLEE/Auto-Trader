@@ -34,6 +34,7 @@
 src/
 ├── 인증/API
 │   ├── config.py            # .env 로더
+│   ├── safety.py            # KIS_ENV=paper 가드 (실주문 차단)
 │   ├── kis_auth.py          # OAuth + 토큰 캐시
 │   ├── kis_api.py           # REST 헬퍼 (hashkey 포함)
 │   └── kis_overseas.py      # 해외 거래소·tr_id 매핑
@@ -53,35 +54,40 @@ src/
 │   ├── market_regime.py     # BULL/RANGE/BEAR 분류
 │   └── fear_greed.py        # F&G API
 │
-├── 전략 모듈
-│   ├── swing_strategy_v3.py        # 운영 중 (체제 어댑티브)
-│   ├── strategy_rsi_reversion.py   # 폐기 (참고용)
-│   ├── strategy_bb_reversion.py    # 폐기 (참고용)
-│   ├── swing_strategy.py           # 폐기 (슬로우 스윙)
-│   └── swing_strategy_fast.py      # 폐기 (단타)
+├── 전략 모듈 (운영 중)
+│   ├── swing_strategy_v3.py        # 체제 어댑티브 스윙
+│   ├── strategy_faber.py           # Faber 모멘텀 (월간)
+│   └── strategy_vaa.py             # VAA (월간)
 │
 ├── 백테스트
 │   ├── dual_momentum.py
-│   ├── swing_backtest.py / _fast.py / _v3.py / _v4.py
-│   ├── backtest_rsi_reversion.py / backtest_bb_reversion.py
+│   ├── swing_backtest_v3.py / _v4.py
+│   ├── backtest_catalyst.py / backtest_tactical.py
+│   ├── multi_strategy_backtest.py / walk_forward.py
 │   └── robustness.py
 │
 ├── 실거래 실행
 │   ├── monthly_rebalance.py        # DM 월간
+│   ├── monthly_faber_us.py         # Faber 월간
+│   ├── monthly_vaa.py              # VAA 월간
 │   ├── daily_swing_v3_kr.py        # KR 일간
 │   ├── daily_swing_v3_us.py        # US 일간
+│   ├── daily_catalyst.py           # Catalyst 단타
 │   ├── daily_snapshot.py           # 일일 스냅샷
-│   └── us_closing_report.py        # US 마감
+│   ├── us_closing_report.py        # US 마감
+│   └── weekly_report.py            # 주간 리포트
 │
-├── 유틸
-│   ├── notify.py            # Telegram
-│   ├── swing_screener.py    # 단타 적합도
+├── 운영 도구
+│   ├── healthcheck.py       # 일일 헬스체크 (env/db/logs/disk)
+│   ├── notify.py            # Telegram + Slack 6채널
 │   └── hello_world.py       # 인증 검증
 │
 └── (기타)
 
-deploy/                       # launchd plist 5개
+archive/                      # 폐기 모듈/plist 격리 (참고용)
+deploy/                       # launchd plist (운영 중 11개)
 docs/                         # 상세 문서 (분리)
+tests/                        # pytest 단위 테스트
 logs/                         # 자동 실행 로그 (.gitignore)
 ```
 
@@ -172,7 +178,24 @@ def reconstruct_position(symbol, df) -> Position | None:
 - 매수: `"v3 진입 (체제: BULL, F&G 33)"`
 - 매도: `"+3% 1차 부분익절 (RANGE)"`
 
-### 5. Telegram 알림
+### 5. 실거래 가드 (반드시 safety 모듈 사용)
+
+**모든 실주문 진입점은 `src.safety` 사용.** 가드 패턴 직접 작성 금지.
+
+```python
+from . import safety
+
+# CLI 진입점 (--execute 가드)
+if safety.block_execute_if_real(args.execute):
+    return 1  # 또는 다른 exit code
+
+# 주문 전송 함수 내부 (방어선 — 절대 우회 금지)
+def _send_orders(...):
+    safety.assert_paper(label="<전략명>")
+    ...
+```
+
+### 6. Telegram 알림
 
 ```python
 from . import notify
@@ -265,13 +288,36 @@ launchctl load ~/Library/LaunchAgents/com.sangjisair.autotrading.<name>.plist
 
 ## 운영 중 시스템 (현재)
 
+### 전략 / 자본 배분
 - DM 70% (069500/133690/360750/148070 중 1택)
 - v3 KR 15% (069500/005930/035420)
 - v3 US 15% (AAPL/NVDA/TSLA)
 - F&G 통합 (사이즈 배율 + 극단 분할매매)
-- 5개 launchd 작업 (monthly, daily_swing_v3_kr, daily_swing_v3_us, snapshot, us_closing_report)
+- (실험 중) Faber 모멘텀 / VAA / Catalyst 단타
 
-자본 합계: **100%**.
+자본 합계 (운영 코어): **100%**.
+
+### launchd 작업 (현재 11개)
+
+매매 진입점:
+- `monthly` — DM 월간 리밸런스 (매월 1-7일 09:05)
+- `daily_swing_v3_kr` — KR 일간 (평일 09:20)
+- `daily_swing_v3_us` — US 일간 (장 마감 후)
+- `monthly_faber_us` / `monthly_vaa` — 월간 실험 전략
+- `daily_catalyst` — Catalyst 단타
+
+리포팅 / 운영:
+- `snapshot` — 일일 잔고 스냅샷
+- `us_closing_report` — US 마감 보고
+- `weekly_report` — 주간 리포트
+- `backup_db` — data.db 백업
+- `healthcheck` — 매일 22:00 환경/DB/로그/디스크 체크
+
+확인 명령:
+```bash
+launchctl list | grep autotrading        # 등록 확인
+ls archive/deploy/                        # 폐기 plist 위치
+```
 
 ---
 

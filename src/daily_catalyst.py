@@ -43,11 +43,13 @@ from . import check_overseas_balance
 from . import check_overseas_price
 from . import config
 from . import db
+from . import safety
 from . import earnings_calendar as ec
 from . import kis_api
 from . import kis_auth
 from . import notify
 from . import place_overseas_order
+from . import realized_pnl
 
 # [#2 개선] universe 확장 (5 → 11종목, 거래 빈도 ↑)
 UNIVERSE = [
@@ -321,16 +323,11 @@ def confirm_execution() -> bool:
         return False
 
 
-def _send_report(actions, holdings, calendar, results=None):
+def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, prices=None):
     if not notify.is_enabled():
         return
     mode = "모의" if config.KIS_ENV == "paper" else "실"
     today = date.today()
-    lines = [
-        f"🎯 호재 단타 (Catalyst) — 일간 [{mode}]",
-        f"날짜: {today.isoformat()}",
-        "",
-    ]
 
     # Catalyst window 활성 종목
     active_syms = []
@@ -343,34 +340,67 @@ def _send_report(actions, holdings, calendar, results=None):
             d_label = "오늘" if delta == 0 else f"{delta:+}일"
             active_syms.append(f"{sym} ({d_label})")
 
+    n_signals = len(actions)
+    lines = [
+        f"*【실적 모멘텀 (Catalyst) — {today.isoformat()} [{mode}]】*",
+        f"　스캔: {len(UNIVERSE)}종목 / 신호 {n_signals}건",
+        "",
+    ]
+
+    # Catalyst window 활성
+    lines.append("*◾️Catalyst Active*")
     if active_syms:
-        lines.append("[Catalyst Active]")
-        lines.extend(f"  {s}" for s in active_syms)
+        for s in active_syms:
+            lines.append(f"　{s}")
     else:
-        lines.append("Catalyst window 없음")
+        lines.append("　window 없음")
+    lines.append("")
 
+    # 보유 포지션
+    lines.append("*◾️보유 catalyst 포지션*")
     if holdings:
-        lines.append("")
-        lines.append("[보유 catalyst 포지션]")
         for sym, h in holdings.items():
-            lines.append(f"  {sym}: {h['qty']}주 @ ${h['avg_price_usd']:.2f}")
-
-    if not actions:
-        lines.append("")
-        lines.append("거래 없음")
+            lines.append(f"　{sym}: {h['qty']:,}주 @ ${h['avg_price_usd']:,.2f}")
     else:
-        lines.append("")
-        lines.append("[액션]")
-        for a in actions:
-            lines.append(f"  {a['side']} {a['symbol']} {a['qty']}주 — {a['reason']}")
+        lines.append("　없음")
+    lines.append("")
 
+    # 액션 / 실행 결과
     if results:
-        lines.append("")
-        lines.append("[실행 결과]")
+        lines.append("*◾️실행 결과*")
         for r in results:
             emoji = "✅" if r.get("status") == "OK" else "❌"
             fill = r.get("fill_status", "")
-            lines.append(f"  {emoji} {r['side']} {r['symbol']} {r.get('filled_qty', '?')}주 [{fill}]")
+            lines.append(
+                f"　{emoji} {r['side']} {r['symbol']} {r.get('filled_qty', '?')}주 [{fill}] — {r.get('reason', '')}"
+            )
+    elif actions:
+        lines.append("*◾️계획 (드라이런)*")
+        for a in actions:
+            lines.append(f"　{a['side']} {a['symbol']} {a['qty']}주 — {a['reason']}")
+    else:
+        lines.append("*◾️실행 결과*")
+        lines.append("　거래 없음")
+
+    # 전체 실현수익률 + 미실현
+    realized, _cur = realized_pnl.realized_for_strategy(STRATEGY_TAG)
+    pct = realized_pnl.pct(realized, sleeve_usd) if sleeve_usd > 0 else 0.0
+
+    unrealized = 0.0
+    if holdings and prices:
+        for sym, h in holdings.items():
+            cur = prices.get(sym, h.get("current_price_usd", 0))
+            avg = h.get("catalyst_avg") or h.get("avg_price_usd", 0)
+            qty = h.get("catalyst_qty") or h.get("qty", 0)
+            if cur > 0 and avg > 0:
+                unrealized += (cur - avg) * qty
+    unr_pct = realized_pnl.pct(unrealized, sleeve_usd) if sleeve_usd > 0 else 0.0
+
+    lines.append("")
+    lines.append("*◾️전체 실현수익률*")
+    lines.append(f"　Catalyst 누적 실현: ${realized:+,.2f} ({pct:+.2f}%)")
+    lines.append(f"　미실현: ${unrealized:+,.2f} ({unr_pct:+.2f}%)")
+    lines.append(f"　(US 슬리브 ≈ ${sleeve_usd:,.0f} 대비)")
 
     notify.send("\n".join(lines), channel=notify.CHANNEL_US_REALTIME)
 
@@ -382,8 +412,7 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true", help="자동 yes")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print(f"[차단] KIS_ENV={config.KIS_ENV} — 실거래 차단.")
+    if safety.block_execute_if_real(args.execute):
         return 3
 
     today = date.today()
@@ -553,7 +582,8 @@ def main() -> int:
     # 7. 실행
     if not actions:
         print("\n변경 없음.")
-        _send_report(actions, catalyst_holdings, calendar)
+        _send_report(actions, catalyst_holdings, calendar,
+                     sleeve_usd=sleeve_usd, prices=prices)
         return 0
 
     print(f"\n총 {len(actions)}개 액션:")
@@ -562,7 +592,8 @@ def main() -> int:
 
     if not args.execute:
         print("\n※ DRY RUN")
-        _send_report(actions, catalyst_holdings, calendar)
+        _send_report(actions, catalyst_holdings, calendar,
+                     sleeve_usd=sleeve_usd, prices=prices)
         return 0
 
     if not args.yes and not confirm_execution():
@@ -606,7 +637,8 @@ def main() -> int:
 
     ok = sum(1 for r in results if r["status"] == "OK")
     print(f"\n완료: 성공 {ok} / 실패 {len(results)-ok}")
-    _send_report(actions, catalyst_holdings, calendar, results)
+    _send_report(actions, catalyst_holdings, calendar, results,
+                 sleeve_usd=sleeve_usd, prices=prices)
     return 0
 
 

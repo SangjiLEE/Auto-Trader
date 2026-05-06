@@ -21,6 +21,7 @@ from . import check_overseas_balance
 from . import check_overseas_price
 from . import config
 from . import db
+from . import safety
 from . import fear_greed
 from . import indicators
 from . import kis_api
@@ -29,6 +30,7 @@ from . import load_candles
 from . import market_regime as mr
 from . import notify
 from . import place_overseas_order
+from . import realized_pnl
 from . import swing_strategy_v3 as v3
 
 # [Day 9 옵션 C + Path A] NVDA + Faber Multi-Asset US 분리 시스템
@@ -373,49 +375,73 @@ def confirm_execution() -> bool:
         return False
 
 
-def _send_report(swing_budget_usd, positions, scan_results, actions, results=None):
+def _send_report(swing_budget_usd, positions, scan_results, actions, results=None, latest_prices=None):
     if not notify.is_enabled():
         return
     today = pd.Timestamp.now().strftime("%-m/%-d (%a) %H:%M KST")
     mode = "모의" if config.KIS_ENV == "paper" else "실거래"
+
+    fg = fear_greed.fetch_index()
+    fg_value = fg.get("value", "?")
+    fg_class = fg.get("classification", "?")
+
     lines = [
-        f"환경: {mode}",
-        f"v3 US 슬롯: ${swing_budget_usd:,.2f}",
-        fear_greed.status_text(),
+        f"*【체제 적응 스윙 (v3 US) — {today} [{mode}]】*",
+        f"　v3 US 슬롯: ${swing_budget_usd:,.2f}",
+        f"　공포·탐욕: {fg_value} ({fg_class})",
         "",
     ]
 
+    # 포지션
+    lines.append("*◾️v3 US 포지션*")
     if positions:
-        lines.append("[v3 US 포지션]")
         for sym, pos in positions.items():
-            lines.append(f"  {sym}({pos.entry_regime}): {pos.qty}주 @ ${pos.avg_price:.2f}")
+            lines.append(f"　{sym}({pos.entry_regime}): {pos.qty:,}주 @ ${pos.avg_price:,.2f}")
     else:
-        lines.append("[v3 US 포지션] 없음")
+        lines.append("　없음")
     lines.append("")
 
-    lines.append("[시그널 스캔]")
+    # 시그널 스캔
+    lines.append("*◾️시그널 스캔*")
     for sym, status in scan_results.items():
-        lines.append(f"  {sym}: {status}")
+        lines.append(f"　{sym}: {status}")
     lines.append("")
 
+    # 실행 결과 / 계획
     if actions and results is not None:
-        lines.append("[실행 결과]")
+        lines.append("*◾️실행 결과*")
         for a in results:
             if a["status"] == "OK":
-                lines.append(f"  ✓ {a['action']} {a['symbol']} {a['qty']}주 — {a['reason']}")
+                lines.append(f"　✅ {a['action']} {a['symbol']} {a['qty']}주 — {a['reason']}")
             else:
-                lines.append(f"  ✗ {a['action']} {a['symbol']}: 실패")
+                lines.append(f"　❌ {a['action']} {a['symbol']}: 실패")
     elif actions:
-        lines.append("[계획(드라이런)]")
+        lines.append("*◾️계획 (드라이런)*")
         for a in actions:
-            lines.append(f"  {a['action']} {a['symbol']} {a['qty']}주 — {a['reason']}")
+            lines.append(f"　{a['action']} {a['symbol']} {a['qty']}주 — {a['reason']}")
     else:
-        lines.append("거래 없음 (조건 미충족)")
+        lines.append("*◾️실행 결과*")
+        lines.append("　거래 없음 (조건 미충족)")
 
-    notify.send(
-        f"<b>🎯 체제 적응 스윙 (v3 US) — {today}</b>\n\n" + "\n".join(lines),
-        channel=notify.CHANNEL_US_REALTIME,
-    )
+    # 전체 실현수익률 + 미실현
+    realized, _cur = realized_pnl.realized_for_strategy(STRATEGY_TAG)
+    pct = realized_pnl.pct(realized, swing_budget_usd)
+
+    unrealized = 0.0
+    if positions and latest_prices:
+        for sym, pos in positions.items():
+            cur = latest_prices.get(sym, 0.0)
+            if cur > 0:
+                unrealized += (cur - pos.avg_price) * pos.qty
+    unr_pct = realized_pnl.pct(unrealized, swing_budget_usd)
+
+    lines.append("")
+    lines.append("*◾️전체 실현수익률*")
+    lines.append(f"　NVDA v3 누적 실현: ${realized:+,.2f} ({pct:+.2f}%)")
+    lines.append(f"　미실현: ${unrealized:+,.2f} ({unr_pct:+.2f}%)")
+    lines.append(f"　(US 슬리브 ${swing_budget_usd:,.0f} 대비)")
+
+    notify.send("\n".join(lines), channel=notify.CHANNEL_US_REALTIME)
 
 
 def _to_int(v):
@@ -432,8 +458,7 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print("[차단] 실거래 모드. KIS_ENV=paper 확인.")
+    if safety.block_execute_if_real(args.execute):
         return 1
 
     print("=" * 64)
@@ -627,10 +652,17 @@ def main() -> int:
             print(f"  {sym}: 시그널 없음 ({r}, 체제 {regime_today})")
             scan_results[sym] = f"대기 ({r}) [{regime_today}]"
 
+    # 미실현 계산용 latest 종가 dict
+    latest_prices = {
+        sym: float(df.iloc[-1]["close"])
+        for sym, df in symbol_data.items() if not df.empty
+    }
+
     if not actions:
         print("\n변경 없음.")
         _persist_position_states(positions)  # B4: 변경 없어도 mutated state 보존
-        _send_report(swing_budget_usd, positions, scan_results, actions)
+        _send_report(swing_budget_usd, positions, scan_results, actions,
+                     latest_prices=latest_prices)
         return 0
 
     print(f"\n총 {len(actions)}개 액션:")
@@ -640,7 +672,8 @@ def main() -> int:
     if not args.execute:
         print("\n※ DRY RUN")
         _persist_position_states(positions)  # B4: 드라이런도 state 보존
-        _send_report(swing_budget_usd, positions, scan_results, actions)
+        _send_report(swing_budget_usd, positions, scan_results, actions,
+                     latest_prices=latest_prices)
         return 0
 
     if not args.yes and not confirm_execution():
@@ -696,7 +729,8 @@ def main() -> int:
     print(f"\n완료: 성공 {ok} / 실패 {len(results)-ok}")
     # B4: 실 주문 결과 반영 — 청산된 sym clear, 나머지 save
     _persist_position_states(positions, results)
-    _send_report(swing_budget_usd, positions, scan_results, actions, results)
+    _send_report(swing_budget_usd, positions, scan_results, actions, results,
+                 latest_prices=latest_prices)
     return 0
 
 

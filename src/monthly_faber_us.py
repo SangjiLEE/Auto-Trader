@@ -46,12 +46,14 @@ from . import check_overseas_balance
 from . import check_overseas_price
 from . import config
 from . import db
+from . import safety
 from . import dual_momentum as dm
 from . import kis_api
 from . import kis_auth
 from . import load_candles
 from . import notify
 from . import place_overseas_order
+from . import realized_pnl
 from . import strategy_faber as faber
 
 # Universe
@@ -206,8 +208,7 @@ def execute_orders(
     token: str,
 ) -> list[dict]:
     """[B2 fill check 통합] 미국 ETF 매매 + 잔고 차분 reconciliation."""
-    if config.KIS_ENV != "paper":
-        raise RuntimeError("실거래 모드 차단. KIS_ENV=paper 확인.")
+    safety.assert_paper(label="미국 ETF 매매")
 
     results: list[dict] = []
     print("\n" + "=" * 64)
@@ -331,27 +332,38 @@ def _send_report(weights, signal_date, holdings, total_usd, orders, results=None
     active_syms = [s for s, w in weights.items() if w > 0]
 
     lines = [
-        f"📊 추세 추종 분산 (Faber US) — 월간 [{mode}]",
-        f"신호 날짜: {signal_date}",
-        f"활성 자산 ({n_active}/7): {', '.join(active_syms) if active_syms else '없음 (현금)'}",
-        f"US 슬롯: ${total_usd:,.2f}",
+        f"*【추세 추종 분산 (Faber US) — 월간 [{mode}]】*",
+        f"　신호 날짜: {signal_date}",
+        f"　활성 자산 ({n_active}/7): {', '.join(active_syms) if active_syms else '없음 (현금)'}",
+        f"　US 슬롯: ${total_usd:,.2f}",
         "",
     ]
+
     if not orders:
-        lines.append("변경 없음 (타겟 = 현재)")
+        lines.append("*◾️실행 결과*")
+        lines.append("　변경 없음 (타겟 = 현재)")
     elif results is None:
-        lines.append("[Plan]")
+        lines.append("*◾️계획 (드라이런)*")
         for side, sym, qty in orders:
-            lines.append(f"  {side} {sym} {qty}주")
+            lines.append(f"　{side} {sym} {qty}주")
     else:
-        lines.append("[실행 결과]")
+        lines.append("*◾️실행 결과*")
         for r in results:
             status_emoji = "✅" if r.get("status") == "OK" else "❌"
             fill = r.get("fill_status", "")
             lines.append(
-                f"  {status_emoji} {r['side']} {r['symbol']} "
+                f"　{status_emoji} {r['side']} {r['symbol']} "
                 f"{r.get('qty', '?')}주 [{fill}]"
             )
+
+    # 전체 실현수익률
+    realized, _cur = realized_pnl.realized_for_strategy(STRATEGY_TAG)
+    pct = realized_pnl.pct(realized, total_usd)
+    lines.append("")
+    lines.append("*◾️전체 실현수익률*")
+    lines.append(f"　Faber 누적 실현: ${realized:+,.2f} ({pct:+.2f}%)")
+    lines.append(f"　(US 슬리브 ${total_usd:,.0f} 대비)")
+
     notify.send("\n".join(lines), channel=notify.CHANNEL_US_REALTIME)
 
 
@@ -362,8 +374,7 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
 
-    if args.execute and config.KIS_ENV != "paper":
-        print(f"[차단] KIS_ENV={config.KIS_ENV} — 실거래 차단.")
+    if safety.block_execute_if_real(args.execute):
         return 3
 
     if args.refresh:
