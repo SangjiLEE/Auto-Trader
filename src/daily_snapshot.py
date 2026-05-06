@@ -219,7 +219,7 @@ def _send_evening_report(snap: dict, prev: dict | None) -> None:
 
     # 헤더 블록
     lines = [
-        f"【장 마감 — {today_str} [{mode}]】",
+        f"*【장 마감 — {today_str} [{mode}]】*",
         f"　총평가: {snap['total_value']:,}원",
         f"　누적손익: {snap['pnl_amount']:+,}원",
     ]
@@ -237,7 +237,7 @@ def _send_evening_report(snap: dict, prev: dict | None) -> None:
     lines.append("")
 
     # 국내 포지션
-    lines.append("◾️국내 포지션")
+    lines.append("*◾️국내 포지션*")
     if snap["positions"]:
         for p in snap["positions"]:
             pnl_pct = 0
@@ -260,7 +260,7 @@ def _send_evening_report(snap: dict, prev: dict | None) -> None:
     unrealized_pct_v = realized_pnl.pct(unrealized_krw, KR_SEED_KRW)
 
     lines.append("")
-    lines.append("◾️전체 실현수익률")
+    lines.append("*◾️전체 실현수익률*")
     lines.append(f"　실현 누적: ₩{int(realized_krw):+,} ({realized_pct:+.2f}%)")
     lines.append(f"　미실현: ₩{int(unrealized_krw):+,} ({unrealized_pct_v:+.2f}%)")
     lines.append(f"　(초기 KR 시드 ₩{KR_SEED_KRW:,} 대비)")

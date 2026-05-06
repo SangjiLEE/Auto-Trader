@@ -385,14 +385,14 @@ def _send_report(swing_budget_usd, positions, scan_results, actions, results=Non
     fg_class = fg.get("classification", "?")
 
     lines = [
-        f"【체제 적응 스윙 (v3 US) — {today} [{mode}]】",
+        f"*【체제 적응 스윙 (v3 US) — {today} [{mode}]】*",
         f"　v3 US 슬롯: ${swing_budget_usd:,.2f}",
         f"　공포·탐욕: {fg_value} ({fg_class})",
         "",
     ]
 
     # 포지션
-    lines.append("◾️v3 US 포지션")
+    lines.append("*◾️v3 US 포지션*")
     if positions:
         for sym, pos in positions.items():
             lines.append(f"　{sym}({pos.entry_regime}): {pos.qty:,}주 @ ${pos.avg_price:,.2f}")
@@ -401,25 +401,25 @@ def _send_report(swing_budget_usd, positions, scan_results, actions, results=Non
     lines.append("")
 
     # 시그널 스캔
-    lines.append("◾️시그널 스캔")
+    lines.append("*◾️시그널 스캔*")
     for sym, status in scan_results.items():
         lines.append(f"　{sym}: {status}")
     lines.append("")
 
     # 실행 결과 / 계획
     if actions and results is not None:
-        lines.append("◾️실행 결과")
+        lines.append("*◾️실행 결과*")
         for a in results:
             if a["status"] == "OK":
                 lines.append(f"　✅ {a['action']} {a['symbol']} {a['qty']}주 — {a['reason']}")
             else:
                 lines.append(f"　❌ {a['action']} {a['symbol']}: 실패")
     elif actions:
-        lines.append("◾️계획 (드라이런)")
+        lines.append("*◾️계획 (드라이런)*")
         for a in actions:
             lines.append(f"　{a['action']} {a['symbol']} {a['qty']}주 — {a['reason']}")
     else:
-        lines.append("◾️실행 결과")
+        lines.append("*◾️실행 결과*")
         lines.append("　거래 없음 (조건 미충족)")
 
     # 전체 실현수익률 + 미실현
@@ -435,7 +435,7 @@ def _send_report(swing_budget_usd, positions, scan_results, actions, results=Non
     unr_pct = realized_pnl.pct(unrealized, swing_budget_usd)
 
     lines.append("")
-    lines.append("◾️전체 실현수익률")
+    lines.append("*◾️전체 실현수익률*")
     lines.append(f"　NVDA v3 누적 실현: ${realized:+,.2f} ({pct:+.2f}%)")
     lines.append(f"　미실현: ${unrealized:+,.2f} ({unr_pct:+.2f}%)")
     lines.append(f"　(US 슬리브 ${swing_budget_usd:,.0f} 대비)")

@@ -341,13 +341,13 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
 
     n_signals = len(actions)
     lines = [
-        f"【실적 모멘텀 (Catalyst) — {today.isoformat()} [{mode}]】",
+        f"*【실적 모멘텀 (Catalyst) — {today.isoformat()} [{mode}]】*",
         f"　스캔: {len(UNIVERSE)}종목 / 신호 {n_signals}건",
         "",
     ]
 
     # Catalyst window 활성
-    lines.append("◾️Catalyst Active")
+    lines.append("*◾️Catalyst Active*")
     if active_syms:
         for s in active_syms:
             lines.append(f"　{s}")
@@ -356,7 +356,7 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
     lines.append("")
 
     # 보유 포지션
-    lines.append("◾️보유 catalyst 포지션")
+    lines.append("*◾️보유 catalyst 포지션*")
     if holdings:
         for sym, h in holdings.items():
             lines.append(f"　{sym}: {h['qty']:,}주 @ ${h['avg_price_usd']:,.2f}")
@@ -366,7 +366,7 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
 
     # 액션 / 실행 결과
     if results:
-        lines.append("◾️실행 결과")
+        lines.append("*◾️실행 결과*")
         for r in results:
             emoji = "✅" if r.get("status") == "OK" else "❌"
             fill = r.get("fill_status", "")
@@ -374,11 +374,11 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
                 f"　{emoji} {r['side']} {r['symbol']} {r.get('filled_qty', '?')}주 [{fill}] — {r.get('reason', '')}"
             )
     elif actions:
-        lines.append("◾️계획 (드라이런)")
+        lines.append("*◾️계획 (드라이런)*")
         for a in actions:
             lines.append(f"　{a['side']} {a['symbol']} {a['qty']}주 — {a['reason']}")
     else:
-        lines.append("◾️실행 결과")
+        lines.append("*◾️실행 결과*")
         lines.append("　거래 없음")
 
     # 전체 실현수익률 + 미실현
@@ -396,7 +396,7 @@ def _send_report(actions, holdings, calendar, results=None, sleeve_usd=0.0, pric
     unr_pct = realized_pnl.pct(unrealized, sleeve_usd) if sleeve_usd > 0 else 0.0
 
     lines.append("")
-    lines.append("◾️전체 실현수익률")
+    lines.append("*◾️전체 실현수익률*")
     lines.append(f"　Catalyst 누적 실현: ${realized:+,.2f} ({pct:+.2f}%)")
     lines.append(f"　미실현: ${unrealized:+,.2f} ({unr_pct:+.2f}%)")
     lines.append(f"　(US 슬리브 ≈ ${sleeve_usd:,.0f} 대비)")

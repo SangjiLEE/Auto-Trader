@@ -334,7 +334,7 @@ def _send_report(target, signal_date, positions, total, orders, results=None):
         return
     mode = "모의" if config.KIS_ENV == "paper" else "실"
     lines = [
-        f"【경계형 자산배분 (VAA) — 월간 [{mode}]】",
+        f"*【경계형 자산배분 (VAA) — 월간 [{mode}]】*",
         f"　신호 날짜: {signal_date}",
         f"　타겟: {target} ({ASSET_NAMES.get(target, '?')})",
         f"　총평가: {total:,}원",
@@ -342,14 +342,14 @@ def _send_report(target, signal_date, positions, total, orders, results=None):
     ]
 
     if not orders:
-        lines.append("◾️실행 결과")
+        lines.append("*◾️실행 결과*")
         lines.append("　변경 없음 (타겟 = 현재)")
     elif results is None:
-        lines.append("◾️계획 (드라이런)")
+        lines.append("*◾️계획 (드라이런)*")
         for side, sym, qty in orders:
             lines.append(f"　{side} {sym} {qty}주")
     else:
-        lines.append("◾️실행 결과")
+        lines.append("*◾️실행 결과*")
         for r in results:
             status_emoji = "✅" if r.get("status") == "OK" else "❌"
             fill = r.get("fill_status", "")
@@ -362,7 +362,7 @@ def _send_report(target, signal_date, positions, total, orders, results=None):
     realized, _cur = realized_pnl.realized_for_strategy(STRATEGY_TAG)
     pct = realized_pnl.pct(realized, KR_SEED_KRW)
     lines.append("")
-    lines.append("◾️전체 실현수익률")
+    lines.append("*◾️전체 실현수익률*")
     lines.append(f"　VAA 누적 실현: ₩{int(realized):+,} ({pct:+.2f}%)")
     lines.append(f"　(초기 KR 시드 ₩{KR_SEED_KRW:,} 대비)")
 

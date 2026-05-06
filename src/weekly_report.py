@@ -169,13 +169,13 @@ def format_report_kr(days: int, trades: list[dict], strategy_stats: dict, eval_d
     unrealized_pct = kr_unrealized / INITIAL_CAPITAL * 100
 
     lines = [
-        f"【주간 종합 리포트 (KR) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]】",
+        f"*【주간 종합 리포트 (KR) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]】*",
         f"　기간: 최근 {days}일",
         "",
-        "◾️KR 자본 현황",
+        "*◾️KR 자본 현황*",
         f"　KR 평가: ₩{kr_total:,}",
         "",
-        f"◾️전략별 ({days}일 거래)",
+        f"*◾️전략별 ({days}일 거래)*",
     ]
     if not kr_stats:
         lines.append("　거래 없음")
@@ -191,7 +191,7 @@ def format_report_kr(days: int, trades: list[dict], strategy_stats: dict, eval_d
             )
 
     lines.append("")
-    lines.append("◾️최근 거래 (최대 10건)")
+    lines.append("*◾️최근 거래 (최대 10건)*")
     kr_trades = [t for t in trades if t["symbol"].isdigit() and len(t["symbol"]) == 6]
     if not kr_trades:
         lines.append("　없음")
@@ -204,7 +204,7 @@ def format_report_kr(days: int, trades: list[dict], strategy_stats: dict, eval_d
             )
 
     lines.append("")
-    lines.append("◾️전체 실현수익률")
+    lines.append("*◾️전체 실현수익률*")
     lines.append(f"　실현 누적: ₩{realized_kr:+,} ({realized_pct:+.2f}%)")
     lines.append(f"　미실현: ₩{kr_unrealized:+,} ({unrealized_pct:+.2f}%)")
     lines.append("　─────────")
@@ -236,13 +236,13 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
     unr_pct = us_unrealized_usd / sleeve_usd * 100 if sleeve_usd > 0 else 0
 
     lines = [
-        f"【주간 종합 리포트 (US) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]】",
+        f"*【주간 종합 리포트 (US) — {today.strftime('%Y-%m-%d (%a) %H:%M KST')} [{mode}]】*",
         f"　기간: 최근 {days}일",
         "",
-        "◾️US 자본 현황",
+        "*◾️US 자본 현황*",
         f"　US 평가: ${us_eval_usd:,.2f} (≈ ₩{us_eval_krw:,})",
         "",
-        f"◾️전략별 ({days}일 거래)",
+        f"*◾️전략별 ({days}일 거래)*",
     ]
     if not us_stats:
         lines.append("　거래 없음")
@@ -258,7 +258,7 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
             )
 
     lines.append("")
-    lines.append("◾️최근 거래 (최대 10건)")
+    lines.append("*◾️최근 거래 (최대 10건)*")
     us_trades = [t for t in trades if t["symbol"] in _US_SYMBOLS]
     if not us_trades:
         lines.append("　없음")
@@ -271,7 +271,7 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
             )
 
     lines.append("")
-    lines.append("◾️현재 미국 보유")
+    lines.append("*◾️현재 미국 보유*")
     if eval_data["us_holdings"]:
         for h in eval_data["us_holdings"]:
             pnl_pct = (
@@ -286,7 +286,7 @@ def format_report_us(days: int, trades: list[dict], strategy_stats: dict, eval_d
         lines.append("　없음")
 
     lines.append("")
-    lines.append("◾️전체 실현수익률")
+    lines.append("*◾️전체 실현수익률*")
     lines.append(f"　실현 누적: ${realized_us:+,.2f} ({realized_pct_v:+.2f}%)")
     lines.append(f"　미실현: ${us_unrealized_usd:+,.2f} ({unr_pct:+.2f}%)")
     lines.append("　─────────")

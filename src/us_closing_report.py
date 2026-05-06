@@ -118,7 +118,7 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
 
     # 헤더 블록
     lines = [
-        f"【미국장 마감 — {today_str} [{mode}]】",
+        f"*【미국장 마감 — {today_str} [{mode}]】*",
         f"　평가 합계: ${snap['eval_total']:,.2f}",
         f"　누적 손익: ${snap['pnl_total']:+,.2f}",
     ]
@@ -130,7 +130,7 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
     lines.append("")
 
     # 미국 보유 포지션
-    lines.append("◾️미국 보유 포지션")
+    lines.append("*◾️미국 보유 포지션*")
     if snap["positions"]:
         for p in snap["positions"]:
             pnl_pct = 0.0
@@ -161,7 +161,7 @@ def _send_us_closing_report(snap: dict, prev: dict | None) -> None:
     unr_pct = realized_pnl.pct(unrealized_usd, sleeve_usd)
 
     lines.append("")
-    lines.append("◾️전체 실현수익률")
+    lines.append("*◾️전체 실현수익률*")
     lines.append(f"　실현 누적: ${realized_usd:+,.2f} ({realized_pct_v:+.2f}%)")
     lines.append(f"　미실현: ${unrealized_usd:+,.2f} ({unr_pct:+.2f}%)")
     lines.append(f"　(US 슬리브 ≈ ${sleeve_usd:,.0f} 대비)")
