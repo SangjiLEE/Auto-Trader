@@ -23,7 +23,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>cd "$HOME/projects/auto-trading-bot" &amp;&amp; "$HOME/projects/auto-trading-bot/.venv/bin/python" -m src.monthly_faber_us --refresh --execute --yes</string>
+        <string>cd "/Users/sangjisair/Desktop/MyProject/autoTrading" &amp;&amp; "/Users/sangjisair/Desktop/MyProject/autoTrading/.venv/bin/python" -m src.monthly_faber_us --refresh --execute --yes</string>
     </array>
 
     <key>StartCalendarInterval</key>
