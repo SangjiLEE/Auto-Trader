@@ -29,6 +29,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import market_hours
 from . import notify
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -114,15 +115,21 @@ def _check_target(name: str, log_name: str, err_name: str) -> list[str]:
 
 
 def run_check() -> dict:
+    """trigger 점검. 미국 휴장일 다음날은 trigger 안 된 게 정상 → skip."""
+    yesterday = (datetime.now() - timedelta(days=1)).date()
+    us_was_open_yesterday = market_hours.is_us_market_open(yesterday)
+
     issues: list[str] = []
-    for name, log_name, err_name in TARGETS:
-        issues.extend(_check_target(name, log_name, err_name))
+    if us_was_open_yesterday:
+        for name, log_name, err_name in TARGETS:
+            issues.extend(_check_target(name, log_name, err_name))
 
     return {
         "checked_at": datetime.now().isoformat(timespec="seconds"),
         "n_targets": len(TARGETS),
         "issues": issues,
         "healthy": len(issues) == 0,
+        "us_was_open_yesterday": us_was_open_yesterday,
     }
 
 
@@ -134,14 +141,13 @@ def format_report(r: dict) -> str:
         "*◾️상태*",
         f"　{health}",
     ]
+    if not r.get("us_was_open_yesterday", True):
+        lines.append("　(어제 미국 휴장일 — trigger 점검 skip)")
     if r["issues"]:
         lines.append("")
         lines.append("*◾️감지된 이슈*")
         for i in r["issues"]:
             lines.append(f"　🚨 {i}")
-        lines.append("")
-        lines.append("*◾️참고*")
-        lines.append("　미국 공휴일 다음날엔 정상 false positive 가능 (휴장일 캘린더 미통합).")
     return "\n".join(lines)
 
 

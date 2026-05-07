@@ -25,6 +25,7 @@ from . import check_balance
 from . import check_price
 from . import config
 from . import db
+from . import market_hours
 from . import safety
 from . import dual_momentum as dm
 from . import kis_api
@@ -447,6 +448,14 @@ def main() -> int:
     if not args.force and _already_done_this_month():
         print("[skip] 이번 달 dual_momentum SUCCESS trade 이미 존재. --force 로 강제 가능.")
         return 0
+
+    # 실 주문 시 시간 / 휴장 가드 (드라이런은 통과)
+    if args.execute:
+        try:
+            market_hours.assert_kis_paper_market_open()
+        except RuntimeError as e:
+            print(f"[차단] {e}")
+            return 5
 
     print("=" * 64)
     mode_label = "실제 실행" if args.execute else "드라이런"
