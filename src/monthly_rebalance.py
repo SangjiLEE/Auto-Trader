@@ -389,6 +389,30 @@ def print_report(
 
 # ── 메인 ──────────────────────────────────────────────
 
+def _already_done_this_month() -> bool:
+    """이번 달 (current month) dual_momentum 의 SUCCESS trade 가 있나?
+
+    SUCCESS = order_id IS NOT NULL (실패 trade 는 보통 order_id NULL).
+    현재 KIS_ENV 기준으로만 판정 (paper / real 분리).
+
+    True 면 main() 이 skip. --force 로 우회 가능.
+    plist 가 매월 1~15일 매일 09:05 trigger 해도 이 멱등 가드로 첫 성공 후 자동 skip.
+    """
+    with db.connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM trades
+            WHERE strategy = 'dual_momentum'
+              AND env = ?
+              AND order_id IS NOT NULL
+              AND date(executed_at) >= date('now', 'start of month')
+            LIMIT 1
+            """,
+            (config.KIS_ENV,),
+        ).fetchone()
+    return row is not None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="월간 리밸런싱")
     parser.add_argument(
@@ -413,7 +437,16 @@ def main() -> int:
         default=0.70,
         help="DM 자본 배정 비율. 0.70=v3 멀티 전략 (기본, v3 KR+US 30% 남김), 1.00=순수 DM.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="이번 달 이미 실행됐어도 강제 진행 (멱등 가드 우회)",
+    )
     args = parser.parse_args()
+
+    if not args.force and _already_done_this_month():
+        print("[skip] 이번 달 dual_momentum SUCCESS trade 이미 존재. --force 로 강제 가능.")
+        return 0
 
     print("=" * 64)
     mode_label = "실제 실행" if args.execute else "드라이런"
