@@ -66,9 +66,20 @@ def _is_retriable(error: KISAPIError) -> bool:
     return any(code in msg for code in _RETRY_CODES)
 
 
-def _with_retry(request_fn: Callable[[], requests.Response]) -> dict[str, Any]:
-    """rate-limit 류 에러 시 지수 백오프 재시도."""
-    last_error: KISAPIError | None = None
+def _with_retry(
+    request_fn: Callable[[], requests.Response],
+    *,
+    retry_on_network: bool = True,
+) -> dict[str, Any]:
+    """rate-limit / 일시 네트워크 장애 시 지수 백오프 재시도.
+
+    POST (주문 전송) 의 경우 retry_on_network=False 로 호출 — 서버 도달
+    후 응답 끊김 (RemoteDisconnected) 시 중복 주문 위험. 멱등성 보장
+    안 되는 호출은 caller 가 명시적으로 끄고 직접 재실행 결정해야 함.
+
+    GET 은 default True. 멱등 호출이라 안전.
+    """
+    last_error: Exception | None = None
     for attempt in range(_MAX_RETRIES):
         try:
             response = request_fn()
@@ -80,9 +91,23 @@ def _with_retry(request_fn: Callable[[], requests.Response]) -> dict[str, Any]:
                 time.sleep(delay)
                 continue
             raise
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as e:
+            last_error = e
+            if retry_on_network and attempt < _MAX_RETRIES - 1:
+                delay = _BASE_DELAY * (2 ** attempt)
+                time.sleep(delay)
+                continue
+            raise KISAPIError(
+                f"네트워크 오류 (재시도 {attempt + 1}/{_MAX_RETRIES}): {e}"
+            ) from e
     # 안전용 (위 루프가 반드시 return 또는 raise)
     assert last_error is not None
-    raise last_error
+    if isinstance(last_error, KISAPIError):
+        raise last_error
+    raise KISAPIError(str(last_error))
 
 
 def _get_hashkey(body: dict[str, Any]) -> str:
@@ -97,9 +122,9 @@ def _get_hashkey(body: dict[str, Any]) -> str:
     def _req() -> requests.Response:
         return requests.post(url, headers=headers, json=body, timeout=10)
 
-    # hashkey 도 rate limit 대상이라 재시도 적용
+    # hashkey 도 rate limit 대상이라 재시도 적용 (조회용, 멱등)
     try:
-        data = _with_retry(_req)
+        data = _with_retry(_req, retry_on_network=True)
     except KISAPIError as e:
         raise KISAPIError(f"hashkey 발급 실패: {e}") from e
 
@@ -131,7 +156,11 @@ def post(
     token: str,
     body: dict[str, Any],
 ) -> dict[str, Any]:
-    """인증 POST. hashkey 자동 첨부 + 자동 재시도."""
+    """인증 POST. hashkey 자동 첨부 + rate-limit 재시도.
+
+    네트워크 retry 는 OFF — 주문 전송 시 응답 끊김 (RemoteDisconnected)
+    재시도 시 중복 주문 위험. 멱등 키 보장은 caller 의 책임.
+    """
     hashkey = _get_hashkey(body)
     headers = _base_headers(tr_id, token)
     headers["hashkey"] = hashkey
@@ -141,4 +170,4 @@ def post(
     def _req() -> requests.Response:
         return requests.post(url, headers=headers, json=body, timeout=10)
 
-    return _with_retry(_req)
+    return _with_retry(_req, retry_on_network=False)

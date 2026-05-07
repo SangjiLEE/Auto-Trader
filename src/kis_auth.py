@@ -61,6 +61,10 @@ def _save_cached_token(token: str, expires_at: float) -> None:
     )
 
 
+_TOKEN_MAX_RETRIES = 4
+_TOKEN_BASE_DELAY = 1.0  # 초
+
+
 def _request_new_token() -> tuple[str, float]:
     url = f"{config.BASE_URL}/oauth2/tokenP"
     payload = {
@@ -68,10 +72,7 @@ def _request_new_token() -> tuple[str, float]:
         "appkey": config.APP_KEY,
         "appsecret": config.APP_SECRET,
     }
-    try:
-        response = requests.post(url, json=payload, timeout=10)
-    except requests.RequestException as e:
-        raise KISAuthError(f"네트워크 오류: {e}") from e
+    response = _post_token_with_retry(url, payload)
 
     if response.status_code != 200:
         raise KISAuthError(
@@ -85,3 +86,30 @@ def _request_new_token() -> tuple[str, float]:
 
     expires_in = int(data.get("expires_in", 86400))
     return token, time.time() + expires_in
+
+
+def _post_token_with_retry(url: str, payload: dict) -> "requests.Response":
+    """토큰 발급용 POST — DNS 해상 실패 / 연결 끊김 등 일시 장애 재시도.
+
+    토큰 발급은 멱등이라 안전하게 retry 가능. snapshot / monthly_*
+    같은 자동 작업이 일시 장애로 fail 하는 사고 방지.
+    """
+    last_error: Exception | None = None
+    for attempt in range(_TOKEN_MAX_RETRIES):
+        try:
+            return requests.post(url, json=payload, timeout=10)
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as e:
+            last_error = e
+            if attempt < _TOKEN_MAX_RETRIES - 1:
+                time.sleep(_TOKEN_BASE_DELAY * (2 ** attempt))
+                continue
+            raise KISAuthError(
+                f"네트워크 오류 (재시도 {attempt + 1}/{_TOKEN_MAX_RETRIES}): {e}"
+            ) from e
+        except requests.RequestException as e:
+            raise KISAuthError(f"네트워크 오류: {e}") from e
+    # 안전용
+    raise KISAuthError(f"네트워크 오류: {last_error}")

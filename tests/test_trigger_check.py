@@ -51,7 +51,45 @@ def test_unhealthy_when_err_recent_and_nonempty(temp_logs):
     os.utime(err, (time.time() - 3600, time.time() - 3600))
     result = trigger_check.run_check()
     assert result["healthy"] is False
-    assert any("err 파일 비어있지 않음" in i for i in result["issues"])
+    assert any("실제 에러 신호" in i for i in result["issues"])
+
+
+def test_zsh_benign_warning_only_is_healthy(temp_logs):
+    """launchd 의 무해한 zsh 경고만 있는 .err 는 false alarm 안 발생."""
+    _touch(temp_logs / "daily_swing_v3_us.log", age_hours=2)
+    err = temp_logs / "daily_swing_v3_us.err"
+    err.write_text(
+        "shell-init: error retrieving current directory: getcwd: cannot access\n"
+        "chdir: error retrieving current directory: getcwd: cannot access\n"
+    )
+    os.utime(err, (time.time() - 3600, time.time() - 3600))
+    result = trigger_check.run_check()
+    assert result["healthy"] is True
+
+
+def test_traceback_keyword_triggers_alert(temp_logs):
+    """Python Traceback 이 .err 에 있으면 unhealthy."""
+    _touch(temp_logs / "daily_swing_v3_us.log", age_hours=2)
+    err = temp_logs / "daily_swing_v3_us.err"
+    err.write_text(
+        "shell-init: error retrieving current directory\n"
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 1, in <module>\n'
+        "    raise ValueError\n"
+    )
+    os.utime(err, (time.time() - 3600, time.time() - 3600))
+    result = trigger_check.run_check()
+    assert result["healthy"] is False
+
+
+def test_korean_error_keyword(temp_logs):
+    """한국어 '오류' 키워드도 매치."""
+    _touch(temp_logs / "daily_swing_v3_us.log", age_hours=2)
+    err = temp_logs / "daily_swing_v3_us.err"
+    err.write_text("API 오류 [40580000] 모의투자 장종료 입니다.\n")
+    os.utime(err, (time.time() - 3600, time.time() - 3600))
+    result = trigger_check.run_check()
+    assert result["healthy"] is False
 
 
 def test_old_err_ignored(temp_logs):
