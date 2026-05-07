@@ -19,6 +19,8 @@ import argparse
 import sys
 import time
 
+import pandas as pd
+
 from . import check_balance
 from . import check_price
 from . import config
