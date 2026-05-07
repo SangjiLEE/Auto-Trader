@@ -4,7 +4,12 @@
 
 검증 대상:
   - logs/daily_swing_v3_us.log mtime ≥ 어제 23:00 KST → trigger 정상
-  - logs/daily_swing_v3_us.err 비어있음 (size 0) → 에러 없음
+  - logs/daily_swing_v3_us.err 에 실제 에러 신호 (Traceback / Error 키워드) 있는지
+
+.err 파일은 launchd 의 `bash -c "cd ..."` 가 매번 zsh 의 무해한
+`shell-init: error retrieving current directory` 경고를 남기기 때문에
+size > 0 만으로는 에러 판정 X. 진짜 에러 키워드 (Traceback, Exception 등)
+존재 여부로 판정.
 
 이상 감지 시 Slack #system_error 채널로 알림. 정상 시 stdout 만 (조용함).
 
@@ -39,6 +44,44 @@ TARGETS = [
 # log mtime 이 이 시간 이상 지났으면 trigger 실패로 판정 (시간 단위).
 STALE_HOURS = 25
 
+# 실제 에러를 가리키는 키워드 (대소문자 무관 매칭)
+ERR_KEYWORDS = (
+    "traceback",
+    "error",
+    "exception",
+    "failed",
+    "❌",
+    "errno",
+    "오류",  # 한국어 (KISAPIError 메시지 등)
+)
+# launchd 의 bash -c 호출이 매번 stderr 에 남기는 무해한 경고 — 무시
+ZSH_BENIGN_PATTERNS = (
+    "shell-init: error retrieving",
+    "chdir: error retrieving",
+)
+
+
+def _has_real_error(err_path: Path) -> bool:
+    """zsh 무해 경고만 있으면 False, 진짜 에러 키워드 있으면 True.
+
+    .err 파일이 launchd 의 cd 호출 경고 (`shell-init: error retrieving
+    current directory`) 로 차 있는 경우가 일반적. 이런 라인을 걸러내고
+    실제 에러 키워드가 남는지 확인.
+    """
+    try:
+        text = err_path.read_text(errors="replace")
+    except OSError:
+        return False
+    real_lines = [
+        line for line in text.splitlines()
+        if line.strip() and not any(p in line for p in ZSH_BENIGN_PATTERNS)
+    ]
+    if not real_lines:
+        return False
+    return any(
+        kw in line.lower() for line in real_lines for kw in ERR_KEYWORDS
+    )
+
 
 def _check_target(name: str, log_name: str, err_name: str) -> list[str]:
     issues: list[str] = []
@@ -58,11 +101,11 @@ def _check_target(name: str, log_name: str, err_name: str) -> list[str]:
         )
 
     if err_path.exists() and err_path.stat().st_size > 0:
-        # err 가 어제 갱신됐으면 어젯밤 trigger 가 에러 났다는 신호
         err_age_hours = (datetime.now().timestamp() - err_path.stat().st_mtime) / 3600
-        if err_age_hours < STALE_HOURS:
+        # err 가 최근 갱신 + 진짜 에러 키워드 있을 때만 이슈로 보고
+        if err_age_hours < STALE_HOURS and _has_real_error(err_path):
             issues.append(
-                f"{name}: err 파일 비어있지 않음 "
+                f"{name}: err 파일에 실제 에러 신호 "
                 f"(size={err_path.stat().st_size}B, "
                 f"갱신 {err_age_hours:.1f}h 전)"
             )
