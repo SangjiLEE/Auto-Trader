@@ -254,6 +254,23 @@ launchctl unload ~/Library/LaunchAgents/com.sangjisair.autotrading.<name>.plist
 launchctl load ~/Library/LaunchAgents/com.sangjisair.autotrading.<name>.plist
 ```
 
+### plist 일괄 동기화 (deploy/ 변경 후)
+```bash
+scripts/deploy_plists.sh
+```
+deploy/ 의 plist 11 개를 ~/Library/LaunchAgents/ 로 복사 + 각 reload. plist 의
+경로/스케줄/ProgramArguments 등 변경 시 단일 명령으로 OS 적용.
+
+### 단발성 catch-up 작업 (누락 보정)
+launchd 가 어떤 이유로 1 회 trigger 누락한 작업을 다음에 한 번 더 실행하려면:
+```bash
+scripts/schedule_makeup.sh <module> <YYYY-MM-DD> <HH:MM>
+
+# 예: monthly DM 5/8 09:30 catch-up
+scripts/schedule_makeup.sh monthly_rebalance 2026-05-08 09:30
+```
+trigger 후 자동 unload + 자기 plist 삭제. 실행 결과는 `logs/<module>_makeup.log`.
+
 ---
 
 ## 새 전략 추가 워크플로우
