@@ -25,6 +25,7 @@ from . import check_balance
 from . import check_price
 from . import config
 from . import db
+from . import market_hours
 from . import safety
 from . import fear_greed
 from . import indicators
@@ -482,6 +483,14 @@ def main() -> int:
 
     if safety.block_execute_if_real(args.execute):
         return 1
+
+    # 실 주문 시 시간 / 휴장 가드 (드라이런은 시간 무관)
+    if args.execute:
+        try:
+            market_hours.assert_kis_paper_market_open()
+        except RuntimeError as e:
+            print(f"[차단] {e}")
+            return 4
 
     print("=" * 64)
     print(f"v3 KR (체제별 어댑티브) {'실행' if args.execute else '드라이런'}")
