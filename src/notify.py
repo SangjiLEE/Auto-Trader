@@ -225,18 +225,22 @@ def send_error(
     return send("\n".join(lines), channel=CHANNEL_SYSTEM_ERROR)
 
 
-def notify_rebalance_start(env: str, target: str, plan_summary: str) -> bool:
+def notify_rebalance_start(
+    env: str, target: str, plan_summary: str,
+    *, channel: str = CHANNEL_KR_REALTIME,
+) -> bool:
     msg = (
         f"<b>🔄 월간 리밸런싱 시작</b>\n"
         f"환경: {env}\n"
         f"타겟: <code>{target}</code>\n\n"
         f"<b>계획:</b>\n<pre>{plan_summary}</pre>"
     )
-    return send(msg)
+    return send(msg, channel=channel)
 
 
 def notify_rebalance_success(
-    env: str, orders_executed: int, summary: str
+    env: str, orders_executed: int, summary: str,
+    *, channel: str = CHANNEL_KR_REALTIME,
 ) -> bool:
     msg = (
         f"<b>✅ 리밸런싱 완료</b>\n"
@@ -244,16 +248,19 @@ def notify_rebalance_success(
         f"체결: {orders_executed}건\n\n"
         f"<pre>{summary}</pre>"
     )
-    return send(msg)
+    return send(msg, channel=channel)
 
 
-def notify_rebalance_failure(env: str, error: str) -> bool:
+def notify_rebalance_failure(
+    env: str, error: str,
+    *, channel: str = CHANNEL_SYSTEM_ERROR,
+) -> bool:
     msg = (
         f"<b>❌ 리밸런싱 실패</b>\n"
         f"환경: {env}\n\n"
         f"<pre>{error}</pre>"
     )
-    return send(msg)
+    return send(msg, channel=channel)
 
 
 def notify_order_result(
@@ -264,6 +271,7 @@ def notify_order_result(
     price: int,
     success: bool,
     detail: str,
+    *, channel: str = CHANNEL_KR_REALTIME,
 ) -> bool:
     icon = "✅" if success else "❌"
     action = "매수" if side == "buy" else "매도"
@@ -272,7 +280,7 @@ def notify_order_result(
         f"환경: {env}\n"
         f"{detail}"
     )
-    return send(msg)
+    return send(msg, channel=channel)
 
 
 def main() -> int:
