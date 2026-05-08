@@ -471,7 +471,10 @@ def _send_report(swing_budget, positions, scan_results, actions, results=None):
     else:
         lines.append("거래 없음 (조건 미충족)")
 
-    notify.send(f"<b>🎯 v3 KR — {today}</b>\n\n" + "\n".join(lines))
+    notify.send(
+        f"<b>🎯 v3 KR — {today}</b>\n\n" + "\n".join(lines),
+        channel=notify.CHANNEL_KR_REALTIME,
+    )
 
 
 def main() -> int:
