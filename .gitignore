@@ -63,3 +63,10 @@ backups/
 # Earnings 캐시
 .earnings_cache.json
 .env.save
+
+# macOS Finder duplicate / iCloud 동기화 충돌 사본 (이름 끝 " 2.확장자")
+* 2.py
+* 2.plist
+* 2.ini
+* 2.md
+* 2.json
