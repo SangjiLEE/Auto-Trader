@@ -26,6 +26,7 @@ from pathlib import Path
 from . import config
 from . import db
 from . import notify
+from . import trigger_check
 
 PROJECT_ROOT = Path(__file__).parent.parent
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -93,8 +94,13 @@ def err_files_today() -> list[Path]:
                 if p.stat().st_size == 0:
                     continue
                 mtime = datetime.fromtimestamp(p.stat().st_mtime).date()
-                if mtime == today:
-                    out.append(p)
+                if mtime != today:
+                    continue
+                # zsh 무해 경고 (`shell-init: error retrieving current
+                # directory`) 만 있는 .err 는 false positive 라 제외
+                if not trigger_check.has_real_error(p):
+                    continue
+                out.append(p)
             except OSError:
                 pass
     return out

@@ -62,12 +62,14 @@ ZSH_BENIGN_PATTERNS = (
 )
 
 
-def _has_real_error(err_path: Path) -> bool:
+def has_real_error(err_path: Path) -> bool:
     """zsh 무해 경고만 있으면 False, 진짜 에러 키워드 있으면 True.
 
     .err 파일이 launchd 의 cd 호출 경고 (`shell-init: error retrieving
     current directory`) 로 차 있는 경우가 일반적. 이런 라인을 걸러내고
     실제 에러 키워드가 남는지 확인.
+
+    healthcheck.err_files_today 도 이 함수 사용 — 같은 false positive 차단.
     """
     try:
         text = err_path.read_text(errors="replace")
@@ -104,7 +106,7 @@ def _check_target(name: str, log_name: str, err_name: str) -> list[str]:
     if err_path.exists() and err_path.stat().st_size > 0:
         err_age_hours = (datetime.now().timestamp() - err_path.stat().st_mtime) / 3600
         # err 가 최근 갱신 + 진짜 에러 키워드 있을 때만 이슈로 보고
-        if err_age_hours < STALE_HOURS and _has_real_error(err_path):
+        if err_age_hours < STALE_HOURS and has_real_error(err_path):
             issues.append(
                 f"{name}: err 파일에 실제 에러 신호 "
                 f"(size={err_path.stat().st_size}B, "
